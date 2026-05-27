@@ -1,0 +1,199 @@
+**DurableStack Canonical Build Plan**
+
+- `DurableStack` = platform and product name (durable job runner)
+
+**Product Positioning**
+- DurableStack is an embedded, database-backed durable job system for app developers.
+- Primary promise: "Run background and scheduled jobs using your existing database, no extra queue infrastructure."
+
+**Version 1 Target Stack**
+- Language/runtime: `C# / .NET 9`
+- Storage providers at launch: `InMemory`, `PostgreSQL`, `SQL Server`, `SQLite`, `MySQL`
+- Hosting: `ASP.NET Core` + `Worker Service`
+- Serialization: `System.Text.Json`
+- DI/logging: Microsoft extensions stack
+- Delivery: NuGet packages under `DurableStack.*`
+
+**Package/Project Layout**
+- `DurableStack.Core`
+- `DurableStack.Postgres`
+- `DurableStack.SqlServer`
+- `DurableStack.Sqlite`
+- `DurableStack.MySql`
+- `DurableStack.AspNetCore`
+- `DurableStack.Worker`
+- `DurableStack.Tests`
+- `examples/AspNetCoreExample`
+- `examples/WorkerServiceExample`
+
+**Recommended Repo Structure**
+- `durable-stack/`
+  - `src/`
+  - `examples/`
+  - `docs/`
+  - `README.md`
+
+**Core Domain Model**
+- Job Definition: what exists
+- Job Schedule: when it should run
+- Job Run/Execution: concrete attempt
+- Worker Lease: who currently owns execution
+
+**Initial Developer API Direction**
+- `AddDurableStack(options => options.UsePostgres(...))`
+- `AddDurableJob<TJob>(name, configure => configure.Cron(...).TimeZone(...).Retry(...))`
+- `IDurableStackClient.EnqueueAsync<TJob>(...)`
+- `IDurableStackClient.ScheduleAsync<TJob>(..., runAtUtc)`
+
+**Database Naming (Product-Scoped, Recommended)**
+- `durable_stack_jobs`
+- `durable_stack_job_runs`
+- `durable_stack_job_locks`
+
+**Execution Model**
+- Poll due pending runs
+- Claim atomically via provider-specific locking/claim strategy
+- Mark leased/running
+- Execute handler
+- Mark success/failure
+- Retry if needed
+- For recurring definitions, compute and enqueue next run
+
+---
+
+**Phase 1 - Core Local Runner**
+- Goal: prove end-to-end execution with no DB dependency.
+- Deliverables:
+  - `IDurableJob`, `IDurableJob<TArgs>`, `JobContext`
+  - Job registry
+  - In-memory queue/store
+  - Hosted worker loop
+  - Unit tests
+- Build task:
+  - Create `DurableStack.sln` and projects listed above.
+  - Implement in-memory execution path and run a sample job from an example app.
+
+**Phase 2 - Durable Persistence Foundation**
+- Goal: survive restarts and support real durability.
+- Deliverables:
+  - SQL migration scripts for `durable_stack_jobs`, `durable_stack_job_runs`, `durable_stack_job_locks`
+  - Automatic migration check/apply during startup when tables do not exist
+  - Enqueue/schedule persistence
+  - Claim due runs with provider-safe atomic semantics
+  - Mark success/failure + retry metadata
+- Build task:
+  - Implement reference relational provider and validate `IDurableJobStore` contract.
+
+**Phase 3 - Recurring Cron Scheduling**
+- Goal: first-class recurring jobs.
+- Deliverables:
+  - Cron parsing (`Cronos`)
+  - Timezone-aware next run calculation
+  - Recurring definition persistence
+  - Scheduler that materializes due recurring runs
+- Build task:
+  - Add `AddDurableJob<TJob>(..., cfg => cfg.Cron(...).TimeZone(...))`.
+
+**Phase 4 - Distributed-Safe Execution**
+- Goal: safe operation with multiple instances.
+- Deliverables:
+  - Worker identity
+  - Lease ownership + expiration
+  - Reclaim expired leases
+  - Optional lease extension/heartbeat
+  - Parallel-worker correctness tests
+- Build task:
+  - Ensure one run executes once effectively across many workers.
+
+**Phase 5 - ASP.NET First-Class Integration**
+- Goal: frictionless setup.
+- Deliverables:
+  - `AddDurableStack(...)`
+  - `UsePostgres(...)`
+  - Auto hosted-service registration
+  - Clean job registration API
+  - Polished ASP.NET sample
+- Build task:
+  - Package extension methods in `DurableStack.AspNetCore`.
+
+**Phase 6 - Observability and Querying**
+- Goal: operational visibility.
+- Deliverables:
+  - Structured lifecycle logging
+  - Query service for recent/failed/running runs
+  - Optional OpenTelemetry hooks
+- Build task:
+  - Add query API surface and diagnostics docs.
+
+**Phase 7 - Dogfooding in Real Apps**
+- Goal: validate DX and reliability under real load.
+- Test scenarios:
+  - Daily reports, sync jobs, invoice jobs, cleanup jobs, delayed onboarding email, retrying API calls
+- Outcome:
+  - Tighten API ergonomics, defaults, and operational guidance.
+
+**Phase 8 - Provider Parity (Launch Matrix)**
+- Goal: deliver parity across all launch storage providers.
+- Launch provider matrix:
+  - `InMemory` (default/local dev)
+  - `PostgreSQL`
+  - `SQL Server`
+  - `SQLite`
+  - `MySQL`
+- Parity requirements:
+  - Same runtime semantics (claim/retry/lease/recurring/materialization)
+  - Idempotent startup migration behavior for durable providers
+  - Provider-specific setup helpers + configuration docs
+  - Registration tests + integration tests per provider
+  - Example coverage for at least one web-hosted path per durable provider
+- Build task:
+  - Implement provider stores in this order: PostgreSQL -> SQL Server -> SQLite -> MySQL.
+
+**Phase 9 - Hosted Tenant Sync and Monetization Foundation (Planning + Implementation)**
+- Goal: optional hosted control plane integration for paying tenants without impacting local-only users.
+- Core behavior:
+  - If `TenantId` is not configured: no hosted sync/reporting behavior is enabled.
+  - If `TenantId` is configured: worker reports selected telemetry/state to hosted service and pulls tenant options.
+- Hosted sync scope (tenant-configurable):
+  - Event stream categories (which event types are synced)
+  - Worker registration/online presence
+  - Heartbeat counts and worker health snapshots
+  - Recurring job definitions/status
+  - Job run summaries/status/failure metadata
+- Runtime control-plane pattern:
+  - Pull tenant options at startup
+  - Poll hosted service periodically for option changes
+  - Apply updated options at runtime where safe
+  - Fail safe: if hosted service unavailable, continue local durable execution
+- Security and privacy baseline:
+  - Tenant-scoped auth credentials for hosted API
+  - Explicit allowlist for synced fields
+  - Retry/backoff and bounded local buffering for transient failures
+  - No hosted sync side effects on job correctness semantics
+- Build task:
+  - Add hosted-sync abstraction in core + optional hosted-sync package, then implement hosted API client and polling/background sync worker.
+
+---
+
+**MVP Scope (Internal Alpha)**
+- Include:
+  - InMemory, PostgreSQL, SQL Server, SQLite, MySQL
+  - One-off jobs
+  - Delayed jobs
+  - Recurring cron jobs
+  - Retries
+  - Distributed-safe execution
+  - Basic logs
+  - Basic run query API
+- Exclude (for now):
+  - Dashboard UI
+  - Full SaaS control plane UI (hosted sync foundation may ship first)
+  - Multi-DB providers
+  - Workflow chains/sagas
+  - Full multi-tenant billing/plan lifecycle
+
+**Naming Conventions Going Forward**
+- Namespace root: `DurableStack`
+- Package IDs: `DurableStack.*`
+- Docs language:
+  - "DurableStack platform and product"

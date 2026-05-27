@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore DurableStack.sln
+
+      - name: Build
+        run: dotnet build DurableStack.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build
+
+      - name: Pack preview artifacts
+        run: |
+          dotnet pack ./src/DurableStack.Core/DurableStack.Core.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+          dotnet pack ./src/DurableStack.Postgres/DurableStack.Postgres.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+          dotnet pack ./src/DurableStack.MySql/DurableStack.MySql.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+          dotnet pack ./src/DurableStack.SqlServer/DurableStack.SqlServer.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+          dotnet pack ./src/DurableStack.Sqlite/DurableStack.Sqlite.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+          dotnet pack ./src/DurableStack.AspNetCore/DurableStack.AspNetCore.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+          dotnet pack ./src/DurableStack.Worker/DurableStack.Worker.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source

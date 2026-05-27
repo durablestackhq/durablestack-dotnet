@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <EnvironmentVariables>
+	  <!--
+      <DURABLESTACK_TEST_POSTGRES>
+        Host=localhost;Port=5432;Database=durable_stack;Username=postgres;Password=YOUR_LOCAL_PASSWORD
+      </DURABLESTACK_TEST_POSTGRES>
+	  -->
+
+      <ASPNETCORE_ENVIRONMENT>Development</ASPNETCORE_ENVIRONMENT>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>
