@@ -24,7 +24,7 @@
     <ProjectReference Include="..\DurableStack.MySql\DurableStack.MySql.csproj" />
     <ProjectReference Include="..\DurableStack.SqlServer\DurableStack.SqlServer.csproj" />
     <ProjectReference Include="..\DurableStack.Sqlite\DurableStack.Sqlite.csproj" />
-    <ProjectReference Include="..\DurableStack.AspNetCore\DurableStack.AspNetCore.csproj" />
+    <ProjectReference Include="..\DurableStack.Hosting\DurableStack.Hosting.csproj" />
     <ProjectReference Include="..\DurableStack.Worker\DurableStack.Worker.csproj" />
   </ItemGroup>
 

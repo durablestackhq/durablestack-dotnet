@@ -22,7 +22,7 @@ Durable providers are opt-in. In-memory is the default and is useful for local d
 ASP.NET Core with PostgreSQL:
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 
 builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
 {
@@ -50,7 +50,7 @@ builder.AddDurableStackPostgres(builder.Configuration, options =>
 ASP.NET Core with MySQL:
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 
 builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
@@ -78,7 +78,7 @@ builder.AddDurableStackMySql(builder.Configuration, options =>
 ASP.NET Core with SQL Server:
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 
 builder.Services.AddDurableStackSqlServer(builder.Configuration, options =>
 {
@@ -106,7 +106,7 @@ builder.AddDurableStackSqlServer(builder.Configuration, options =>
 ASP.NET Core with SQLite:
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 
 builder.Services.AddDurableStackSqlite(builder.Configuration, options =>
 {
@@ -193,7 +193,7 @@ If both `TenantId` and `ClientSecret` are set, API ingestion is enabled automati
 Use IANA time zone IDs for recurring schedules (for example, `America/Chicago` or `UTC`).
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Core.Options;
 
 builder.Services
