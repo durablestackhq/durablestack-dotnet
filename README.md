@@ -76,29 +76,15 @@ Published package IDs:
 - Build: `dotnet build DurableStack.sln`
 - Test: `dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj`
 
-## Pre-release pack and publish (PowerShell)
+## Installation guidance
 
-Pack with explicit version:
+Choose one of these package patterns:
 
-```powershell
-$version = "0.0.1-alpha.1"
-$outDir = ".\artifacts\packages"
+- Full ASP.NET Core integration with all relational providers: `DurableStack.AspNetCore`
+- Worker service hosting integration: `DurableStack.Worker`
+- Minimal/custom composition: `DurableStack.Core` + exactly the provider package(s) you need
 
-dotnet pack .\src\DurableStack.Core\DurableStack.Core.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-dotnet pack .\src\DurableStack.Postgres\DurableStack.Postgres.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-dotnet pack .\src\DurableStack.MySql\DurableStack.MySql.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-dotnet pack .\src\DurableStack.SqlServer\DurableStack.SqlServer.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-dotnet pack .\src\DurableStack.Sqlite\DurableStack.Sqlite.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-dotnet pack .\src\DurableStack.AspNetCore\DurableStack.AspNetCore.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-dotnet pack .\src\DurableStack.Worker\DurableStack.Worker.csproj -c Release -o $outDir --include-symbols --include-source -p:Version=$version
-```
-
-Push to NuGet (`NUGET_API_KEY` required):
-
-```powershell
-dotnet nuget push .\artifacts\packages\*.nupkg --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY --skip-duplicate
-dotnet nuget push .\artifacts\packages\*.snupkg --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY --skip-duplicate
-```
+In-memory execution support is built into `DurableStack.Core` (no extra provider package required).
 
 ## Project metadata
 
