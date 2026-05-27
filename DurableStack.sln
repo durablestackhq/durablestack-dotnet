@@ -9,13 +9,13 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.Core", "src\Du
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.Postgres", "src\DurableStack.Postgres\DurableStack.Postgres.csproj", "{E61813AE-3BA7-402E-AEEF-55D46137CBD4}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.AspNetCore", "src\DurableStack.AspNetCore\DurableStack.AspNetCore.csproj", "{F1D4CC91-AE63-47D9-83EA-14060A8FE859}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.Hosting", "src\DurableStack.Hosting\DurableStack.Hosting.csproj", "{F1D4CC91-AE63-47D9-83EA-14060A8FE859}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.Worker", "src\DurableStack.Worker\DurableStack.Worker.csproj", "{2B13C407-EB1E-446B-8654-DEFA27C7181D}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.Tests", "src\DurableStack.Tests\DurableStack.Tests.csproj", "{833BE479-2DDE-468D-B1BA-00CB4F98AED6}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCoreExample", "examples\AspNetCoreExample\AspNetCoreExample.csproj", "{0CF3E4FF-8DD2-40BD-9672-DA4D3270D8C3}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingExample", "examples\HostingExample\HostingExample.csproj", "{0CF3E4FF-8DD2-40BD-9672-DA4D3270D8C3}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "WorkerServiceExample", "examples\WorkerServiceExample\WorkerServiceExample.csproj", "{185BCF2B-BFFA-4EAE-A411-5C98B013C71E}"
 EndProject
@@ -23,23 +23,23 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "examples", "examples", "{02
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{3CC8CC5A-CCC5-46AF-9BC4-0995ED486166}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCorePostgresExample", "examples\AspNetCorePostgresExample\AspNetCorePostgresExample.csproj", "{1B6A7492-8FBC-4B32-8C2A-5F2AAFCE2BBC}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingPostgresExample", "examples\HostingPostgresExample\HostingPostgresExample.csproj", "{1B6A7492-8FBC-4B32-8C2A-5F2AAFCE2BBC}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.SqlServer", "src\DurableStack.SqlServer\DurableStack.SqlServer.csproj", "{7309237B-F7D4-4946-98D2-E45D7442EAFF}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCoreSqlServerExample", "examples\AspNetCoreSqlServerExample\AspNetCoreSqlServerExample.csproj", "{3CDC1909-86AD-4428-B9CA-3093C05931A9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingSqlServerExample", "examples\HostingSqlServerExample\HostingSqlServerExample.csproj", "{3CDC1909-86AD-4428-B9CA-3093C05931A9}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.Sqlite", "src\DurableStack.Sqlite\DurableStack.Sqlite.csproj", "{4DD86878-087A-46F9-ADB9-1A636348AB8D}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCoreSqliteExample", "examples\AspNetCoreSqliteExample\AspNetCoreSqliteExample.csproj", "{A33FE1DD-9730-4E38-BCE2-5350F2EEB550}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingSqliteExample", "examples\HostingSqliteExample\HostingSqliteExample.csproj", "{A33FE1DD-9730-4E38-BCE2-5350F2EEB550}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCorePostgresTestBed", "examples\AspNetCorePostgresTestBed\AspNetCorePostgresTestBed.csproj", "{0EE1AC21-2ADA-4BB1-AC95-E407F2507491}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingPostgresTestBed", "examples\HostingPostgresTestBed\HostingPostgresTestBed.csproj", "{0EE1AC21-2ADA-4BB1-AC95-E407F2507491}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DurableStack.MySql", "src\DurableStack.MySql\DurableStack.MySql.csproj", "{C9CD3EFD-5131-47CC-B4B9-FEC87477C327}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCoreMySqlExample", "examples\AspNetCoreMySqlExample\AspNetCoreMySqlExample.csproj", "{3B845A8C-90B9-4886-BD11-7873DDF96DB8}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingMySqlExample", "examples\HostingMySqlExample\HostingMySqlExample.csproj", "{3B845A8C-90B9-4886-BD11-7873DDF96DB8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AspNetCoreMySqlTestBed", "examples\AspNetCoreMySqlTestBed\AspNetCoreMySqlTestBed.csproj", "{21590757-58E8-4D43-9162-8D93964EA8B6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConsoleInMemoryExample", "examples\ConsoleInMemoryExample\ConsoleInMemoryExample.csproj", "{0D56C92B-94F4-444F-997D-8C5BB37681F7}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -231,18 +231,18 @@ Global
 		{3B845A8C-90B9-4886-BD11-7873DDF96DB8}.Release|x64.Build.0 = Release|Any CPU
 		{3B845A8C-90B9-4886-BD11-7873DDF96DB8}.Release|x86.ActiveCfg = Release|Any CPU
 		{3B845A8C-90B9-4886-BD11-7873DDF96DB8}.Release|x86.Build.0 = Release|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Debug|x64.Build.0 = Debug|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Debug|x86.Build.0 = Debug|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Release|Any CPU.Build.0 = Release|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Release|x64.ActiveCfg = Release|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Release|x64.Build.0 = Release|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Release|x86.ActiveCfg = Release|Any CPU
-		{21590757-58E8-4D43-9162-8D93964EA8B6}.Release|x86.Build.0 = Release|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Debug|x64.Build.0 = Debug|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Debug|x86.Build.0 = Debug|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x64.ActiveCfg = Release|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x64.Build.0 = Release|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x86.ActiveCfg = Release|Any CPU
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -263,6 +263,6 @@ Global
 		{0EE1AC21-2ADA-4BB1-AC95-E407F2507491} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{C9CD3EFD-5131-47CC-B4B9-FEC87477C327} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{3B845A8C-90B9-4886-BD11-7873DDF96DB8} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
-		{21590757-58E8-4D43-9162-8D93964EA8B6} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{0D56C92B-94F4-444F-997D-8C5BB37681F7} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 EndGlobal

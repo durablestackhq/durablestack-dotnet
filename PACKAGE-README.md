@@ -7,7 +7,7 @@ DurableStack provides durable background and scheduled jobs backed by relational
 ## Package selection
 
 - `DurableStack.Core`: core runtime + in-memory support (no extra provider package required for in-memory)
-- `DurableStack.AspNetCore`: ASP.NET Core integration and provider wiring
+- `DurableStack.Hosting`: generic hosting + dependency-injection integration and provider wiring
 - `DurableStack.Worker`: worker-service hosting integration
 - Provider packages: `DurableStack.Postgres`, `DurableStack.MySql`, `DurableStack.SqlServer`, `DurableStack.Sqlite`
 

@@ -1,9 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
-    <ProjectReference Include="..\DurableStack.Hosting\DurableStack.Hosting.csproj" />
     <ProjectReference Include="..\DurableStack.Core\DurableStack.Core.csproj" />
+    <ProjectReference Include="..\DurableStack.Postgres\DurableStack.Postgres.csproj" />
     <ProjectReference Include="..\DurableStack.MySql\DurableStack.MySql.csproj" />
+    <ProjectReference Include="..\DurableStack.SqlServer\DurableStack.SqlServer.csproj" />
+    <ProjectReference Include="..\DurableStack.Sqlite\DurableStack.Sqlite.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="9.0.0" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -11,13 +17,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
-    <PackageId>DurableStack.Worker</PackageId>
+    <PackageId>DurableStack.Hosting</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
     <VersionSuffix>beta.1</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
-    <Description>Worker service hosting integration for DurableStack durable jobs.</Description>
-    <PackageTags>durable jobs;scheduler;background jobs;workerservice;dotnet</PackageTags>
+    <Description>Generic hosting and dependency injection integration for DurableStack.</Description>
+    <PackageTags>durable jobs;scheduler;background jobs;hosting;dotnet</PackageTags>
     <RepositoryUrl>https://github.com/durablestackhq/durablestack-dotnet</RepositoryUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <IncludeSymbols>true</IncludeSymbols>

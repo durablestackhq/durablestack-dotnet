@@ -1,4 +1,4 @@
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Worker.Hosting;
 using WorkerServiceExample;
 

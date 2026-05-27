@@ -1,5 +1,5 @@
 using System;
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Core.Options;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

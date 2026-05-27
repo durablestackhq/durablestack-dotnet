@@ -1,7 +1,7 @@
 using System;
 using System.Linq;
-using DurableStack.AspNetCore.DependencyInjection;
-using DurableStack.AspNetCore.Events;
+using DurableStack.Hosting.DependencyInjection;
+using DurableStack.Hosting.Events;
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;

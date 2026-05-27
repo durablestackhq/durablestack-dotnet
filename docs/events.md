@@ -54,7 +54,7 @@ New payload fields:
 You can surface events directly to standard application logs.
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 
 builder.Services.AddDurableStack(builder.Configuration);
 builder.Services.UseDurableStackLoggingEventSink();
@@ -67,7 +67,7 @@ This does not disable API ingestion when tenant credentials are configured.
 Implement `IDurableStackEventSink` and register it.
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;
 
@@ -96,7 +96,7 @@ DurableStack exposes tracing and metrics via OpenTelemetry.
 Enable registration:
 
 ```csharp
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 
 builder.Services.AddDurableStack(builder.Configuration);
 builder.Services.AddDurableStackOpenTelemetry();

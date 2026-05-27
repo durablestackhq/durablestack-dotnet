@@ -1,4 +1,4 @@
-using DurableStack.AspNetCore.DependencyInjection;
+using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Options;
 using Microsoft.Extensions.Configuration;

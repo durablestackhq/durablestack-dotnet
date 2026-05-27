@@ -56,7 +56,7 @@ Published package IDs:
 - `DurableStack.MySql`
 - `DurableStack.SqlServer`
 - `DurableStack.Sqlite`
-- `DurableStack.AspNetCore`
+- `DurableStack.Hosting`
 - `DurableStack.Worker`
 
 ## Docs
@@ -80,7 +80,7 @@ Published package IDs:
 
 Choose one of these package patterns:
 
-- Full ASP.NET Core integration with all relational providers: `DurableStack.AspNetCore`
+- Full hosting/DI integration with all relational providers: `DurableStack.Hosting`
 - Worker service hosting integration: `DurableStack.Worker`
 - Minimal/custom composition: `DurableStack.Core` + exactly the provider package(s) you need
 
