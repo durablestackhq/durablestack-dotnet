@@ -188,8 +188,11 @@ public sealed class PostgresIntegrationTests
         var recurring = new RecurringJobState
         {
             JobName = registration.JobName,
+            JobType = registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
             CronExpression = registration.CronExpression!,
             TimeZone = registration.TimeZone,
+            MaxAttempts = registration.MaxAttempts,
+            Enabled = true,
             NextRunAtUtc = dueAt,
         };
 

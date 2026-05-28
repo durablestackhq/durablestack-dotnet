@@ -13,4 +13,8 @@ public interface IDurableJobRunQueryService
     Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(int take = 100, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(string status, int take = 100, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(string jobName, int take = 100, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(int take = 100, CancellationToken cancellationToken = default);
 }

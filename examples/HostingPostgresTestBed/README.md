@@ -57,12 +57,34 @@ It is intended for API/App integration testing where you want predictable job ou
 - `GET /runs`
   - Returns up to 50 recent runs.
 
+- `GET /runs/job/{jobName}?take=<n>`
+  - Returns run history for a specific job name.
+
+- `GET /runs/enqueued?take=<n>`
+  - Returns only enqueue-driven runs (excludes recurring-materialized runs).
+
 - `GET /runs/{id}`
   - Returns details for a specific run id.
 
 - `GET /runs/status/{status}?take=<n>`
   - Returns runs by status (`pending`, `leased`, `succeeded`, `failed`).
   - `take` default: `50`, range: `1..500`.
+
+- `GET /schedules`
+  - Lists recurring schedules (enabled and disabled).
+
+- `POST /schedules/{jobName}/disable`
+  - Disables a recurring schedule.
+
+- `POST /schedules/{jobName}/enable`
+  - Re-enables a recurring schedule.
+
+- `POST /schedules/{jobName}/run-now`
+  - Enqueues the recurring job immediately as an ad-hoc run.
+
+- `PUT /schedules/{jobName}/cron?cron=<expr>&timeZone=<iana>`
+  - Updates cron expression/time zone for a recurring schedule.
+  - `timeZone` defaults to `UTC` when omitted.
 
 ## Notes
 

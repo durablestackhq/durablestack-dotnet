@@ -14,6 +14,8 @@ public sealed class JobRunRecord
 
     public DateTimeOffset ScheduledForUtc { get; set; }
 
+    public DateTimeOffset? ScheduleSlotUtc { get; set; }
+
     public DateTimeOffset? StartedAtUtc { get; set; }
 
     public DateTimeOffset? CompletedAtUtc { get; set; }
