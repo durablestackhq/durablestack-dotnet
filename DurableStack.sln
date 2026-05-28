@@ -41,6 +41,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingMySqlExample", "exam
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ConsoleInMemoryExample", "examples\ConsoleInMemoryExample\ConsoleInMemoryExample.csproj", "{0D56C92B-94F4-444F-997D-8C5BB37681F7}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HostingMySqlTestBed", "examples\HostingMySqlTestBed\HostingMySqlTestBed.csproj", "{562A20C1-587A-46DA-B902-7D97CDC44278}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -243,6 +245,18 @@ Global
 		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x64.Build.0 = Release|Any CPU
 		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x86.ActiveCfg = Release|Any CPU
 		{0D56C92B-94F4-444F-997D-8C5BB37681F7}.Release|x86.Build.0 = Release|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Debug|x64.Build.0 = Debug|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Debug|x86.Build.0 = Debug|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Release|Any CPU.Build.0 = Release|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Release|x64.ActiveCfg = Release|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Release|x64.Build.0 = Release|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Release|x86.ActiveCfg = Release|Any CPU
+		{562A20C1-587A-46DA-B902-7D97CDC44278}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -264,5 +278,6 @@ Global
 		{C9CD3EFD-5131-47CC-B4B9-FEC87477C327} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{3B845A8C-90B9-4886-BD11-7873DDF96DB8} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 		{0D56C92B-94F4-444F-997D-8C5BB37681F7} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
+		{562A20C1-587A-46DA-B902-7D97CDC44278} = {02EA681E-C7D8-13C7-8484-4AC65E1B71E8}
 	EndGlobalSection
 EndGlobal

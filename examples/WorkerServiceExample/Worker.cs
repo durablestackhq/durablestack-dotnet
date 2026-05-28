@@ -1,4 +1,3 @@
-using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 
 namespace WorkerServiceExample;
@@ -16,67 +15,12 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Optional: enqueue startup work to verify the pipeline end-to-end.
         await _jobs.EnqueueAsync<CleanupJob>(cancellationToken: stoppingToken);
         _logger.LogInformation("Queued CleanupJob at startup.");
 
+        // Optional: enqueue a long-running job to observe lease renewal behavior.
         await _jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: stoppingToken);
         _logger.LogInformation("Queued LongRunningLeaseDemoJob at startup.");
-    }
-}
-
-public sealed class CleanupJob : IDurableJob
-{
-    private readonly ILogger<CleanupJob> _logger;
-
-    public CleanupJob(ILogger<CleanupJob> logger)
-    {
-        _logger = logger;
-    }
-
-    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
-    {
-        _logger.LogInformation(
-            "Executing cleanup job. RunId={RunId} Attempt={Attempt}",
-            context.RunId,
-            context.Attempt);
-
-        return Task.CompletedTask;
-    }
-}
-
-public sealed class RecurringWorkerHeartbeatJob : IDurableJob
-{
-    private readonly ILogger<RecurringWorkerHeartbeatJob> _logger;
-
-    public RecurringWorkerHeartbeatJob(ILogger<RecurringWorkerHeartbeatJob> logger)
-    {
-        _logger = logger;
-    }
-
-    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
-    {
-        _logger.LogInformation(
-            "Executing recurring worker heartbeat. RunId={RunId} Attempt={Attempt}",
-            context.RunId,
-            context.Attempt);
-
-        return Task.CompletedTask;
-    }
-}
-
-public sealed class LongRunningLeaseDemoJob : IDurableJob
-{
-    private readonly ILogger<LongRunningLeaseDemoJob> _logger;
-
-    public LongRunningLeaseDemoJob(ILogger<LongRunningLeaseDemoJob> logger)
-    {
-        _logger = logger;
-    }
-
-    public async Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
-    {
-        _logger.LogInformation("Long-running lease demo started. RunId={RunId}", context.RunId);
-        await Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
-        _logger.LogInformation("Long-running lease demo completed. RunId={RunId}", context.RunId);
     }
 }
