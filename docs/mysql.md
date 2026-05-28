@@ -13,7 +13,10 @@ Use `ConnectionStrings:DurableStack` and set provider mode under `DurableStack`.
   },
   "DurableStack": {
     "StorageProvider": "MySql",
-    "DatabaseTablePrefix": "Acme_"
+    "DatabaseTablePrefix": "Acme_",
+    "PollIntervalSeconds": 0.5,
+    "BatchSize": 25,
+    "LeaseDurationSeconds": 5
   }
 }
 ```
@@ -24,11 +27,10 @@ Then initialize:
 builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = $"{Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName}-{Environment.ProcessId}";
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
+
+If these tuning values are omitted, defaults are `PollInterval=5s`, `BatchSize=50`, and `LeaseDuration=30s`.
 
 ## Table naming and prefixes
 

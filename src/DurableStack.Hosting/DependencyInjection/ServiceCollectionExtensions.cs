@@ -284,6 +284,16 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         DurableStackOptions options)
     {
+        if (options.PollInterval <= TimeSpan.Zero)
+        {
+            options.PollInterval = TimeSpan.FromSeconds(5);
+        }
+
+        if (options.LeaseDuration <= TimeSpan.Zero)
+        {
+            options.LeaseDuration = TimeSpan.FromSeconds(30);
+        }
+
         if (options.StorageProvider == DurableStackStorageProvider.Postgres && string.IsNullOrWhiteSpace(options.Postgres.ConnectionString))
         {
             throw new InvalidOperationException(

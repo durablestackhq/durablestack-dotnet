@@ -9,9 +9,6 @@ var workerName = $"{Environment.GetEnvironmentVariable("HOSTNAME") ?? Environmen
 builder.AddDurableStackPostgres(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(5);
 });
 // Uncomment to surface DurableStack lifecycle events (including worker heartbeats) in logs.
 // builder.Services.UseDurableStackLoggingEventSink();
