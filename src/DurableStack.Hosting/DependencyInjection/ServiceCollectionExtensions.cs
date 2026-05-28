@@ -13,7 +13,9 @@ using DurableStack.MySql.DependencyInjection;
 using DurableStack.Postgres.DependencyInjection;
 using DurableStack.Sqlite.DependencyInjection;
 using DurableStack.SqlServer.DependencyInjection;
+using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -348,8 +350,65 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDurableStackProcessor, DurableStackProcessor>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableStackEventSink, NoOpDurableStackEventSink>());
         AddApiIngestionEventSinkIfConfigured(services, options);
+
+        if (options.JobRegistration.AutoDiscoverJobsFromAssembly)
+        {
+            services.AddDurableJobsFromAssembly();
+        }
+
         services.AddSingleton<IDurableJobRunQueryService, DurableJobRunQueryService>();
         services.AddHostedService<DurableStackHostedService>();
+
+        return services;
+    }
+
+    public static IServiceCollection AddDurableJobsFromAssembly(this IServiceCollection services)
+    {
+        var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetCallingAssembly();
+        return services.AddDurableJobsFromAssembly(assembly);
+    }
+
+    public static IServiceCollection AddDurableJobsFromAssembly<TMarker>(this IServiceCollection services)
+    {
+        return services.AddDurableJobsFromAssembly(typeof(TMarker).Assembly);
+    }
+
+    public static IServiceCollection AddDurableJobsFromAssembly(this IServiceCollection services, Assembly assembly)
+    {
+        if (assembly is null)
+        {
+            throw new ArgumentNullException(nameof(assembly));
+        }
+
+        var discovered = assembly
+            .GetTypes()
+            .Where(IsDiscoverableDurableJobType)
+            .Select(CreateRegistration)
+            .ToList();
+
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seenTypes = new HashSet<Type>();
+        foreach (var registration in GetExistingRegistrations(services))
+        {
+            seenNames.Add(registration.JobName);
+            seenTypes.Add(registration.JobType);
+        }
+
+        foreach (var registration in discovered)
+        {
+            if (!seenNames.Add(registration.JobName))
+            {
+                throw new InvalidOperationException($"A job named '{registration.JobName}' is already registered.");
+            }
+
+            if (!seenTypes.Add(registration.JobType))
+            {
+                throw new InvalidOperationException($"The job type '{registration.JobType.FullName}' is already registered.");
+            }
+
+            services.AddTransient(registration.JobType);
+            services.AddSingleton(registration);
+        }
 
         return services;
     }
@@ -360,6 +419,8 @@ public static class ServiceCollectionExtensions
         Action<DurableJobOptions> configure)
         where TJob : class, IDurableJob
     {
+        EnsureUniqueJobRegistration(services, name, typeof(TJob));
+
         var options = new DurableJobOptions();
         configure(options);
 
@@ -382,6 +443,8 @@ public static class ServiceCollectionExtensions
         int maxAttempts = 3)
         where TJob : class, IDurableJob
     {
+        EnsureUniqueJobRegistration(services, name, typeof(TJob));
+
         services.AddTransient<TJob>();
         services.AddSingleton(new DurableJobRegistration
         {
@@ -401,6 +464,8 @@ public static class ServiceCollectionExtensions
         int maxAttempts = 3)
         where TJob : class, IDurableJob
     {
+        EnsureUniqueJobRegistration(services, name, typeof(TJob));
+
         services.AddTransient<TJob>();
         services.AddSingleton(new DurableJobRegistration
         {
@@ -420,6 +485,8 @@ public static class ServiceCollectionExtensions
         Action<DurableJobOptions> configure)
         where TJob : class, IDurableJob<TArgs>
     {
+        EnsureUniqueJobRegistration(services, name, typeof(TJob));
+
         var options = new DurableJobOptions();
         configure(options);
 
@@ -443,6 +510,8 @@ public static class ServiceCollectionExtensions
         int maxAttempts = 3)
         where TJob : class, IDurableJob<TArgs>
     {
+        EnsureUniqueJobRegistration(services, name, typeof(TJob));
+
         services.AddTransient<TJob>();
         services.AddSingleton(new DurableJobRegistration
         {
@@ -463,6 +532,8 @@ public static class ServiceCollectionExtensions
         int maxAttempts = 3)
         where TJob : class, IDurableJob<TArgs>
     {
+        EnsureUniqueJobRegistration(services, name, typeof(TJob));
+
         services.AddTransient<TJob>();
         services.AddSingleton(new DurableJobRegistration
         {
@@ -515,5 +586,113 @@ public static class ServiceCollectionExtensions
         }
 
         services.UseDurableStackApiIngestionEventSink();
+    }
+
+    private static IEnumerable<DurableJobRegistration> GetExistingRegistrations(IServiceCollection services)
+    {
+        foreach (var descriptor in services)
+        {
+            if (descriptor.ServiceType != typeof(DurableJobRegistration) || descriptor.ImplementationInstance is not DurableJobRegistration registration)
+            {
+                continue;
+            }
+
+            yield return registration;
+        }
+    }
+
+    private static bool IsDiscoverableDurableJobType(Type type)
+    {
+        if (!type.IsClass || type.IsAbstract || type.ContainsGenericParameters)
+        {
+            return false;
+        }
+
+        if (!type.IsPublic && !type.IsNestedPublic)
+        {
+            return false;
+        }
+
+        if (typeof(IDurableJob).IsAssignableFrom(type))
+        {
+            return true;
+        }
+
+        return TryGetDurableJobPayloadType(type, out _);
+    }
+
+    private static DurableJobRegistration CreateRegistration(Type jobType)
+    {
+        var durableAttribute = jobType.GetCustomAttribute<DurableJobAttribute>();
+        var recurringAttribute = jobType.GetCustomAttribute<RecurringJobAttribute>();
+
+        var jobName = string.IsNullOrWhiteSpace(durableAttribute?.Name)
+            ? jobType.Name
+            : durableAttribute!.Name!.Trim();
+
+        var maxAttempts = durableAttribute?.MaxAttempts ?? 3;
+        if (maxAttempts <= 0)
+        {
+            throw new InvalidOperationException(
+                $"Job '{jobType.FullName}' has invalid MaxAttempts={maxAttempts}. MaxAttempts must be greater than zero.");
+        }
+
+        string? cronExpression = null;
+        var timeZone = "UTC";
+
+        if (recurringAttribute is not null)
+        {
+            if (string.IsNullOrWhiteSpace(recurringAttribute.Cron))
+            {
+                throw new InvalidOperationException(
+                    $"Job '{jobType.FullName}' has [RecurringJob] but no cron expression was provided.");
+            }
+
+            cronExpression = recurringAttribute.Cron.Trim();
+            timeZone = string.IsNullOrWhiteSpace(recurringAttribute.TimeZone)
+                ? "UTC"
+                : recurringAttribute.TimeZone.Trim();
+
+            _ = TimeZoneResolver.ResolveFromIana(timeZone);
+        }
+
+        _ = TryGetDurableJobPayloadType(jobType, out var payloadType);
+
+        return new DurableJobRegistration
+        {
+            JobName = jobName,
+            JobType = jobType,
+            PayloadType = payloadType,
+            MaxAttempts = maxAttempts,
+            CronExpression = cronExpression,
+            TimeZone = timeZone,
+        };
+    }
+
+    private static bool TryGetDurableJobPayloadType(Type jobType, out Type? payloadType)
+    {
+        payloadType = jobType
+            .GetInterfaces()
+            .Where(x => x.IsGenericType && x.GetGenericTypeDefinition() == typeof(IDurableJob<>))
+            .Select(x => x.GetGenericArguments()[0])
+            .FirstOrDefault();
+
+        return payloadType is not null;
+    }
+
+    private static void EnsureUniqueJobRegistration(IServiceCollection services, string jobName, Type jobType)
+    {
+        foreach (var registration in GetExistingRegistrations(services))
+        {
+            if (string.Equals(registration.JobName, jobName, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException($"A job named '{jobName}' is already registered.");
+            }
+
+            if (registration.JobType == jobType)
+            {
+                throw new InvalidOperationException($"The job type '{jobType.FullName}' is already registered.");
+            }
+        }
     }
 }

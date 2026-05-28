@@ -28,12 +28,6 @@ services.AddDurableStack(options =>
     options.LeaseDuration = TimeSpan.FromSeconds(5);
 });
 
-services.AddDurableJob<ConsoleHeartbeatJob>("console-heartbeat-every-minute", job =>
-{
-    job.RunOnCron("* * * * *", timeZone: "UTC");
-    job.WithMaxAttempts(3);
-});
-
 using var provider = services.BuildServiceProvider();
 
 var startupLogger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
@@ -71,6 +65,8 @@ while (!cts.IsCancellationRequested)
 
 startupLogger.LogInformation("Console in-memory example stopped.");
 
+[DurableJob(Name = "console-heartbeat-every-minute")]
+[RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class ConsoleHeartbeatJob : IDurableJob
 {
     private readonly ILogger<ConsoleHeartbeatJob> _logger;

@@ -14,7 +14,7 @@ builder.Configuration
         optional: true,
         reloadOnChange: false);
 
-builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
+builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
     options.PollInterval = TimeSpan.FromMilliseconds(500);
@@ -29,9 +29,9 @@ builder.Logging.AddSimpleConsole();
 
 var app = builder.Build();
 
-app.Logger.LogInformation("DurableStack example started. Provider=Postgres WorkerName={WorkerName}", workerName);
+app.Logger.LogInformation("DurableStack example started. Provider=MySql WorkerName={WorkerName}", workerName);
 
-app.MapGet("/", () => "DurableStack Hosting PostgreSQL Test Bed");
+app.MapGet("/", () => "DurableStack Hosting MySQL Test Bed");
 
 app.MapPost("/migrate", async (IDurableStackStoreMigrator migrator, CancellationToken cancellationToken) =>
 {
@@ -163,7 +163,7 @@ app.MapPost("/enqueue-fail-custom", async (
         configuredMaxAttempts,
         cancellationToken);
 
-    return Results.Accepted($"/runs", new
+    return Results.Accepted("/runs", new
     {
         runId,
         endpoint = "/enqueue-fail-custom",
@@ -189,7 +189,7 @@ public sealed class SendWelcomeEmailJob : IDurableJob<SendWelcomeEmailArgs>
     public Task ExecuteAsync(SendWelcomeEmailArgs args, JobContext context, CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "[PostgresTestBed] Sending welcome email to {Email}. RunId={RunId} Attempt={Attempt}",
+            "[MySqlTestBed] Sending welcome email to {Email}. RunId={RunId} Attempt={Attempt}",
             args.Email,
             context.RunId,
             context.Attempt);
@@ -216,7 +216,7 @@ public sealed class HeartbeatJob : IDurableJob
 
     public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("[PostgresTestBed] Recurring heartbeat executed. RunId={RunId}", context.RunId);
+        _logger.LogInformation("[MySqlTestBed] Recurring heartbeat executed. RunId={RunId}", context.RunId);
         return Task.CompletedTask;
     }
 }
@@ -233,9 +233,9 @@ public sealed class LongRunningLeaseDemoJob : IDurableJob
 
     public async Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("[PostgresTestBed] Long-running lease demo started. RunId={RunId}", context.RunId);
+        _logger.LogInformation("[MySqlTestBed] Long-running lease demo started. RunId={RunId}", context.RunId);
         await Task.Delay(TimeSpan.FromSeconds(20), cancellationToken);
-        _logger.LogInformation("[PostgresTestBed] Long-running lease demo completed. RunId={RunId}", context.RunId);
+        _logger.LogInformation("[MySqlTestBed] Long-running lease demo completed. RunId={RunId}", context.RunId);
     }
 }
 
@@ -252,7 +252,7 @@ public sealed class FlakyFailureDemoJob : IDurableJob<FlakyFailureDemoArgs>
     public Task ExecuteAsync(FlakyFailureDemoArgs args, JobContext context, CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "[PostgresTestBed] Flaky failure demo executing. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt} FailUntilAttempt={FailUntilAttempt}",
+            "[MySqlTestBed] Flaky failure demo executing. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt} FailUntilAttempt={FailUntilAttempt}",
             args.ScenarioName,
             context.RunId,
             context.Attempt,
@@ -261,11 +261,11 @@ public sealed class FlakyFailureDemoJob : IDurableJob<FlakyFailureDemoArgs>
         if (context.Attempt <= args.FailUntilAttempt)
         {
             throw new InvalidOperationException(
-                $"[PostgresTestBed] Simulated failure for scenario '{args.ScenarioName}' at attempt {context.Attempt}.");
+                $"[MySqlTestBed] Simulated failure for scenario '{args.ScenarioName}' at attempt {context.Attempt}.");
         }
 
         _logger.LogInformation(
-            "[PostgresTestBed] Flaky failure demo succeeded. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt}",
+            "[MySqlTestBed] Flaky failure demo succeeded. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt}",
             args.ScenarioName,
             context.RunId,
             context.Attempt);

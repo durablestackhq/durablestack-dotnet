@@ -1,5 +1,6 @@
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
+using DurableStack.Hosting.DependencyInjection;
 
 namespace WorkerServiceExample;
 
@@ -24,6 +25,7 @@ public class Worker : BackgroundService
     }
 }
 
+[DurableJob(Name = "cleanup-job")]
 public sealed class CleanupJob : IDurableJob
 {
     private readonly ILogger<CleanupJob> _logger;
@@ -44,6 +46,8 @@ public sealed class CleanupJob : IDurableJob
     }
 }
 
+[DurableJob(Name = "worker-heartbeat-every-minute")]
+[RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class RecurringWorkerHeartbeatJob : IDurableJob
 {
     private readonly ILogger<RecurringWorkerHeartbeatJob> _logger;
@@ -64,6 +68,7 @@ public sealed class RecurringWorkerHeartbeatJob : IDurableJob
     }
 }
 
+[DurableJob(Name = "worker-long-running-lease-demo")]
 public sealed class LongRunningLeaseDemoJob : IDurableJob
 {
     private readonly ILogger<LongRunningLeaseDemoJob> _logger;

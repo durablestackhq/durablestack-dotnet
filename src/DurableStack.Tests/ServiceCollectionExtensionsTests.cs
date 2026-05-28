@@ -138,6 +138,75 @@ public sealed class ServiceCollectionExtensionsTests
         Assert.Contains(sinks, sink => sink is TestEventSink);
     }
 
+    [Fact]
+    public void AddDurableJobsFromAssemblyContaining_registers_jobs_with_defaults_and_attributes()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableJobsFromAssembly<DiscoveryDefaultJob>();
+
+        var registrations = services
+            .Where(d => d.ServiceType == typeof(DurableJobRegistration))
+            .Select(d => Assert.IsType<DurableJobRegistration>(d.ImplementationInstance))
+            .ToList();
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryDefaultJob)
+            && x.JobName == nameof(DiscoveryDefaultJob)
+            && x.MaxAttempts == 3
+            && x.CronExpression is null);
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryRecurringJob)
+            && x.JobName == "discovery-recurring-job"
+            && x.MaxAttempts == 5
+            && x.CronExpression == "*/5 * * * *"
+            && x.TimeZone == "UTC");
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryArgsJob)
+            && x.PayloadType == typeof(DiscoveryPayload)
+            && x.MaxAttempts == 4);
+    }
+
+    [Fact]
+    public void AddDurableJobsFromAssemblyContaining_throws_when_duplicate_name_exists()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableJob<NoArgsTestJob>(nameof(DiscoveryDefaultJob));
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddDurableJobsFromAssembly<DiscoveryDefaultJob>());
+
+        Assert.Contains("already registered", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AddDurableStack_can_disable_auto_discovery()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.JobRegistration.AutoDiscoverJobsFromAssembly = false;
+        });
+
+        var registrationDescriptors = services.Where(d => d.ServiceType == typeof(DurableJobRegistration)).ToList();
+        Assert.Empty(registrationDescriptors);
+    }
+
+    [Fact]
+    public void AddDurableJob_throws_when_job_was_already_discovered()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableJobsFromAssembly<DiscoveryDefaultJob>();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddDurableJob<DiscoveryDefaultJob>(nameof(DiscoveryDefaultJob)));
+
+        Assert.Contains("already registered", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private sealed class NoArgsTestJob : IDurableJob
     {
         public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)

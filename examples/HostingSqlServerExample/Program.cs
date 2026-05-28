@@ -26,20 +26,6 @@ builder.Services.AddDurableStackOpenTelemetry();
 
 builder.Logging.AddSimpleConsole();
 
-builder.Services.AddDurableJob<SendWelcomeEmailJob, SendWelcomeEmailArgs>("send-welcome-email", job =>
-{
-    job.WithMaxAttempts(3);
-});
-builder.Services.AddDurableJob<HeartbeatJob>("heartbeat-every-minute", job =>
-{
-    job.RunOnCron("* * * * *", timeZone: "UTC");
-    job.WithMaxAttempts(3);
-});
-builder.Services.AddDurableJob<LongRunningLeaseDemoJob>("long-running-lease-demo", job =>
-{
-    job.WithMaxAttempts(3);
-});
-
 var app = builder.Build();
 
 app.Logger.LogInformation("DurableStack example started. Provider=SqlServer WorkerName={WorkerName}", workerName);
@@ -105,6 +91,7 @@ app.MapPost("/enqueue-long-running", async (IDurableStackClient jobs, Cancellati
 
 app.Run();
 
+[DurableJob(Name = "send-welcome-email")]
 public sealed class SendWelcomeEmailJob : IDurableJob<SendWelcomeEmailArgs>
 {
     private readonly ILogger<SendWelcomeEmailJob> _logger;
@@ -131,6 +118,8 @@ public sealed class SendWelcomeEmailArgs
     public string Email { get; set; } = string.Empty;
 }
 
+[DurableJob(Name = "heartbeat-every-minute")]
+[RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class HeartbeatJob : IDurableJob
 {
     private readonly ILogger<HeartbeatJob> _logger;
@@ -147,6 +136,7 @@ public sealed class HeartbeatJob : IDurableJob
     }
 }
 
+[DurableJob(Name = "long-running-lease-demo")]
 public sealed class LongRunningLeaseDemoJob : IDurableJob
 {
     private readonly ILogger<LongRunningLeaseDemoJob> _logger;

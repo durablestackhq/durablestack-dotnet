@@ -70,6 +70,7 @@ Published package IDs:
 - `docs/reliability-model.md`
 - `docs/timezones.md`
 - `docs/events.md`
+- `docs/job-registration.md`
 
 ## Local development
 
@@ -78,13 +79,20 @@ Published package IDs:
 
 ## Installation guidance
 
-Choose one of these package patterns:
+| Scenario | Install | Includes |
+| --- | --- | --- |
+| Default quick start | `DurableStack.Hosting` | Hosting/DI integration + `Core` + relational providers (`Postgres`, `MySql`, `SqlServer`, `Sqlite`) |
+| Worker-host quick start | `DurableStack.Worker` | Worker-host helper APIs + `DurableStack.Hosting` dependencies |
+| Minimal/custom | `DurableStack.Core` + one provider package | Smallest dependency set for targeted deployments |
+| In-memory only | `DurableStack.Core` | In-memory provider support is built in |
 
-- Full hosting/DI integration with all relational providers: `DurableStack.Hosting`
-- Worker service hosting integration: `DurableStack.Worker`
-- Minimal/custom composition: `DurableStack.Core` + exactly the provider package(s) you need
+Recommended default for most apps: start with `DurableStack.Hosting`, then move to `DurableStack.Core` + a single provider if you want a leaner dependency footprint.
 
-In-memory execution support is built into `DurableStack.Core` (no extra provider package required).
+## Job setup
+
+- Default behavior: `AddDurableStack(...)` auto-discovers public `IDurableJob` and `IDurableJob<TArgs>` classes in the app assembly
+- Recurring jobs: add `[RecurringJob("...")]` on the class (optional `[DurableJob]` can override name/max attempts)
+- Power-user mode: set `options.JobRegistration.AutoDiscoverJobsFromAssembly = false` and use explicit `AddDurableJob<...>(...)`
 
 ## Project metadata
 

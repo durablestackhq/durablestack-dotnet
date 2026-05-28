@@ -19,6 +19,13 @@ builder.Services.AddDurableStack(options =>
 
 Durable providers are opt-in. In-memory is the default and is useful for local development.
 
+Job registration is auto-discovered by default from the app assembly. Any public class implementing `IDurableJob` or `IDurableJob<TArgs>` is registered automatically.
+
+- Default job name: class name
+- Default max attempts: `3`
+- Add `[RecurringJob("...")]` to make a job scheduled
+- Without `[RecurringJob]`, a job is enqueue-only
+
 ASP.NET Core with PostgreSQL:
 
 ```csharp
@@ -201,6 +208,28 @@ builder.Services
     {
         options.WorkerName = "api-worker";
         options.Recurring.CatchUpPolicy = RecurringCatchUpPolicy.SkipMissed;
+    });
+
+[DurableJob(Name = "worker-heartbeat")]
+[RecurringJob("*/5 * * * *", TimeZone = "America/Chicago")]
+public sealed class RecurringWorkerHeartbeatJob : IDurableJob
+{
+    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+```
+
+## Explicit registration (power-user mode)
+
+If you want full manual control, disable auto-discovery and register jobs explicitly:
+
+```csharp
+builder.Services
+    .AddDurableStack(options =>
+    {
+        options.JobRegistration.AutoDiscoverJobsFromAssembly = false;
     })
     .AddDurableJob<RecurringWorkerHeartbeatJob>("worker-heartbeat", job =>
     {

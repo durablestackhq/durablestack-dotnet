@@ -17,20 +17,6 @@ builder.AddDurableStackPostgres(builder.Configuration, options =>
 builder.Services.AddDurableStackOpenTelemetry();
 
 builder.Services.AddLogging(logging => logging.AddSimpleConsole());
-
-builder.Services.AddDurableJob<CleanupJob>("cleanup-job", job =>
-{
-    job.WithMaxAttempts(3);
-});
-builder.Services.AddDurableJob<RecurringWorkerHeartbeatJob>("worker-heartbeat-every-minute", job =>
-{
-    job.RunOnCron("* * * * *", timeZone: "UTC");
-    job.WithMaxAttempts(3);
-});
-builder.Services.AddDurableJob<LongRunningLeaseDemoJob>("worker-long-running-lease-demo", job =>
-{
-    job.WithMaxAttempts(3);
-});
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
