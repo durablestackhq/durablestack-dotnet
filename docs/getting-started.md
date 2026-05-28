@@ -161,6 +161,19 @@ builder.Services.AddDurableStack(options =>
 });
 ```
 
+## Non-hosted bootstrap (manual loop apps)
+
+If you are not running `DurableStackHostedService` (for example, in a manual console loop), initialize DurableStack once through the service provider:
+
+```csharp
+using DurableStack.Hosting.Hosting;
+
+using var provider = services.BuildServiceProvider();
+await provider.InitializeDurableStackAsync(CancellationToken.None);
+```
+
+This runs store migration + recurring schedule initialization. In hosted ASP.NET Core/worker scenarios, this is already handled automatically by `DurableStackHostedService`.
+
 ## Eventing credentials: config or explicit init
 
 You can provide DurableStack eventing credentials either through configuration or directly in the init callback.

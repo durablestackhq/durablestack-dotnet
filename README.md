@@ -93,6 +93,7 @@ Recommended default for most apps: start with `DurableStack.Hosting`, then move 
 - Default behavior: `AddDurableStack(...)` auto-discovers public `IDurableJob` and `IDurableJob<TArgs>` classes in the app assembly
 - Recurring jobs: add `[RecurringJob("...")]` on the class (optional `[DurableJob]` can override name/max attempts)
 - Power-user mode: set `options.JobRegistration.AutoDiscoverJobsFromAssembly = false` and use explicit `AddDurableJob<...>(...)`
+- Non-hosted/manual loops: call `provider.InitializeDurableStackAsync(...)` once; hosted apps already initialize automatically
 
 ## Project metadata
 

@@ -337,6 +337,7 @@ public static class ServiceCollectionExtensions
         }
 
         services.AddSingleton<IDurableJobRegistry>(provider => new DurableStackJobRegistry(provider.GetServices<DurableJobRegistration>()));
+        services.AddSingleton<DurableStackBootstrapState>();
         services.AddSingleton<IDurableStackClient, DefaultDurableStackClient>();
         services.AddSingleton<DefaultDurableJobRunner>();
         services.AddSingleton<IDurableJobRunner>(provider =>

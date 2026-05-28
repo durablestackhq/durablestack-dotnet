@@ -17,14 +17,17 @@ public class Worker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Optional: enqueue startup work to verify the pipeline end-to-end.
         await _jobs.EnqueueAsync<CleanupJob>(cancellationToken: stoppingToken);
         _logger.LogInformation("Queued CleanupJob at startup.");
 
+        // Optional: enqueue a long-running job to observe lease renewal behavior.
         await _jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: stoppingToken);
         _logger.LogInformation("Queued LongRunningLeaseDemoJob at startup.");
     }
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "cleanup-job")]
 public sealed class CleanupJob : IDurableJob
 {
@@ -46,7 +49,9 @@ public sealed class CleanupJob : IDurableJob
     }
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "worker-heartbeat-every-minute")]
+// Optional: make this job recurring; without this attribute it is enqueue-only.
 [RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class RecurringWorkerHeartbeatJob : IDurableJob
 {
@@ -68,6 +73,7 @@ public sealed class RecurringWorkerHeartbeatJob : IDurableJob
     }
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "worker-long-running-lease-demo")]
 public sealed class LongRunningLeaseDemoJob : IDurableJob
 {

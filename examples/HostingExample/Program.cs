@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 var workerName = $"{Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName}-{Environment.ProcessId}";
 var runStatuses = new[] { "pending", "leased", "succeeded", "failed" };
 
+// Required: register DurableStack + hosted background processing for this app.
 builder.Services.AddDurableStack(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
@@ -15,6 +16,7 @@ builder.Services.AddDurableStack(builder.Configuration, options =>
 });
 // Uncomment to surface DurableStack lifecycle events (including worker heartbeats) in logs.
 // builder.Services.UseDurableStackLoggingEventSink();
+// Optional: emit DurableStack traces/metrics via OpenTelemetry.
 builder.Services.AddDurableStackOpenTelemetry();
 
 builder.Logging.AddSimpleConsole();
@@ -78,6 +80,7 @@ app.MapPost("/enqueue-long-running", async (IDurableStackClient jobs, Cancellati
 
 app.Run();
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "send-welcome-email")]
 public sealed class SendWelcomeEmailJob : IDurableJob<SendWelcomeEmailArgs>
 {
@@ -105,7 +108,9 @@ public sealed class SendWelcomeEmailArgs
     public string Email { get; set; } = string.Empty;
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "heartbeat-every-minute")]
+// Optional: make this job recurring; without this attribute it is enqueue-only.
 [RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class HeartbeatJob : IDurableJob
 {
@@ -123,6 +128,7 @@ public sealed class HeartbeatJob : IDurableJob
     }
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "long-running-lease-demo")]
 public sealed class LongRunningLeaseDemoJob : IDurableJob
 {
