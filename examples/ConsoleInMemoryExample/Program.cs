@@ -1,8 +1,8 @@
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Options;
-using DurableStack.Core.Scheduling;
 using DurableStack.Hosting.DependencyInjection;
+using DurableStack.Hosting.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -19,6 +19,7 @@ services.AddLogging(logging =>
     logging.SetMinimumLevel(LogLevel.Information);
 });
 
+// Required: register DurableStack services; this non-hosted sample uses in-memory storage.
 services.AddDurableStack(options =>
 {
     options.StorageProvider = DurableStackStorageProvider.InMemory;
@@ -31,13 +32,11 @@ services.AddDurableStack(options =>
 using var provider = services.BuildServiceProvider();
 
 var startupLogger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-var migrator = provider.GetRequiredService<IDurableStackStoreMigrator>();
-var recurringInitializer = provider.GetRequiredService<IRecurringJobInitializer>();
 var processor = provider.GetRequiredService<IDurableStackProcessor>();
 var options = provider.GetRequiredService<DurableStackOptions>();
 
-await migrator.MigrateAsync(CancellationToken.None);
-await recurringInitializer.InitializeAsync(CancellationToken.None);
+// Required for non-hosted apps: run migrations and recurring job initialization once.
+await provider.InitializeDurableStackAsync(CancellationToken.None);
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, args) =>
@@ -65,7 +64,9 @@ while (!cts.IsCancellationRequested)
 
 startupLogger.LogInformation("Console in-memory example stopped.");
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "console-heartbeat-every-minute")]
+// Optional: make this job recurring; without this attribute it is enqueue-only.
 [RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class ConsoleHeartbeatJob : IDurableJob
 {

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Hosting.Events;
+using DurableStack.Hosting.Hosting;
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;
@@ -207,6 +208,33 @@ public sealed class ServiceCollectionExtensionsTests
         Assert.Contains("already registered", exception.Message, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task InitializeDurableStackAsync_runs_bootstrap_once()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDurableStack(options =>
+        {
+            options.JobRegistration.AutoDiscoverJobsFromAssembly = false;
+        });
+
+        services.AddSingleton<CountingMigrator>();
+        services.AddSingleton<IDurableStackStoreMigrator>(provider => provider.GetRequiredService<CountingMigrator>());
+        services.AddSingleton<CountingRecurringInitializer>();
+        services.AddSingleton<IRecurringJobInitializer>(provider => provider.GetRequiredService<CountingRecurringInitializer>());
+
+        using var provider = services.BuildServiceProvider();
+
+        await provider.InitializeDurableStackAsync();
+        await provider.InitializeDurableStackAsync();
+
+        var migrator = provider.GetRequiredService<CountingMigrator>();
+        var recurring = provider.GetRequiredService<CountingRecurringInitializer>();
+
+        Assert.Equal(1, migrator.CallCount);
+        Assert.Equal(1, recurring.CallCount);
+    }
+
     private sealed class NoArgsTestJob : IDurableJob
     {
         public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
@@ -232,6 +260,28 @@ public sealed class ServiceCollectionExtensionsTests
     {
         public Task PublishAsync(DurableStackEvent @event, CancellationToken cancellationToken = default)
         {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingMigrator : IDurableStackStoreMigrator
+    {
+        public int CallCount { get; private set; }
+
+        public Task MigrateAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingRecurringInitializer : IRecurringJobInitializer
+    {
+        public int CallCount { get; private set; }
+
+        public Task InitializeAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
             return Task.CompletedTask;
         }
     }

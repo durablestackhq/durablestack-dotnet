@@ -66,3 +66,13 @@ builder.Services
 
 - Auto-discovery minimizes boilerplate for most apps.
 - Explicit registration gives maximal control for advanced setups.
+
+## Initialization note
+
+Hosted apps initialize migrations and recurring schedules automatically via `DurableStackHostedService`.
+
+If you run without that hosted service, call:
+
+```csharp
+await provider.InitializeDurableStackAsync(cancellationToken);
+```

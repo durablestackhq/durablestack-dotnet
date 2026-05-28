@@ -14,6 +14,7 @@ builder.Configuration
         optional: true,
         reloadOnChange: false);
 
+// Required: register DurableStack + hosted background processing using MySQL storage.
 builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
@@ -23,6 +24,7 @@ builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 });
 // Optional additional sink for local debugging:
 // builder.Services.UseDurableStackLoggingEventSink();
+// Optional: emit DurableStack traces/metrics via OpenTelemetry.
 builder.Services.AddDurableStackOpenTelemetry();
 
 builder.Logging.AddSimpleConsole();
@@ -176,6 +178,7 @@ app.MapPost("/enqueue-fail-custom", async (
 
 app.Run();
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "send-welcome-email")]
 public sealed class SendWelcomeEmailJob : IDurableJob<SendWelcomeEmailArgs>
 {
@@ -203,7 +206,9 @@ public sealed class SendWelcomeEmailArgs
     public string Email { get; set; } = string.Empty;
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "heartbeat-every-minute")]
+// Optional: make this job recurring; without this attribute it is enqueue-only.
 [RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class HeartbeatJob : IDurableJob
 {
@@ -221,6 +226,7 @@ public sealed class HeartbeatJob : IDurableJob
     }
 }
 
+// Optional: pin a stable job name instead of defaulting to the class name.
 [DurableJob(Name = "long-running-lease-demo")]
 public sealed class LongRunningLeaseDemoJob : IDurableJob
 {
@@ -239,6 +245,7 @@ public sealed class LongRunningLeaseDemoJob : IDurableJob
     }
 }
 
+// Optional: pin a stable job name and default retry count for this job type.
 [DurableJob(Name = "flaky-failure-demo", MaxAttempts = 5)]
 public sealed class FlakyFailureDemoJob : IDurableJob<FlakyFailureDemoArgs>
 {
