@@ -55,6 +55,27 @@ app.MapGet("/runs", async (IDurableJobRunQueryService query, CancellationToken c
     return Results.Ok(runs);
 });
 
+app.MapGet("/runs/job/{jobName}", async (
+    string jobName,
+    IDurableJobRunQueryService query,
+    int? take,
+    CancellationToken cancellationToken) =>
+{
+    var limit = Math.Clamp(take ?? 50, 1, 500);
+    var runs = await query.GetRunsByJobNameAsync(jobName, limit, cancellationToken);
+    return Results.Ok(runs);
+});
+
+app.MapGet("/runs/enqueued", async (
+    IDurableJobRunQueryService query,
+    int? take,
+    CancellationToken cancellationToken) =>
+{
+    var limit = Math.Clamp(take ?? 50, 1, 500);
+    var runs = await query.GetEnqueuedRunsAsync(limit, cancellationToken);
+    return Results.Ok(runs);
+});
+
 app.MapGet("/runs/{id:guid}", async (Guid id, IDurableJobRunQueryService query, CancellationToken cancellationToken) =>
 {
     var run = await query.GetRunAsync(id, cancellationToken);
@@ -87,6 +108,68 @@ app.MapPost("/enqueue-long-running", async (IDurableStackClient jobs, Cancellati
 {
     await jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: cancellationToken);
     return Results.Accepted();
+});
+
+app.MapGet("/schedules", async (IDurableScheduleAdminService schedules, CancellationToken cancellationToken) =>
+{
+    var jobs = await schedules.ListScheduledJobsAsync(includeDisabled: true, cancellationToken);
+    var response = jobs.Select(job => new
+    {
+        job.JobName,
+        job.JobType,
+        job.CronExpression,
+        job.TimeZone,
+        job.MaxAttempts,
+        job.Enabled,
+        nextRunAtUtc = job.Enabled && job.NextRunAtUtc > DateTimeOffset.MinValue ? job.NextRunAtUtc : (DateTimeOffset?)null,
+    });
+
+    return Results.Ok(response);
+});
+
+app.MapPost("/schedules/{jobName}/disable", async (
+    string jobName,
+    IDurableScheduleAdminService schedules,
+    CancellationToken cancellationToken) =>
+{
+    var updated = await schedules.SetScheduledJobEnabledAsync(jobName, enabled: false, cancellationToken);
+    return updated ? Results.Ok(new { jobName, enabled = false }) : Results.NotFound();
+});
+
+app.MapPost("/schedules/{jobName}/enable", async (
+    string jobName,
+    IDurableScheduleAdminService schedules,
+    CancellationToken cancellationToken) =>
+{
+    var updated = await schedules.SetScheduledJobEnabledAsync(jobName, enabled: true, cancellationToken);
+    return updated ? Results.Ok(new { jobName, enabled = true }) : Results.NotFound();
+});
+
+app.MapPost("/schedules/{jobName}/run-now", async (
+    string jobName,
+    IDurableScheduleAdminService schedules,
+    CancellationToken cancellationToken) =>
+{
+    var queued = await schedules.RunScheduledJobNowAsync(jobName, cancellationToken);
+    return queued ? Results.Accepted() : Results.NotFound();
+});
+
+app.MapPut("/schedules/{jobName}/cron", async (
+    string jobName,
+    string cron,
+    string? timeZone,
+    IDurableScheduleAdminService schedules,
+    CancellationToken cancellationToken) =>
+{
+    var updated = await schedules.UpdateScheduledJobCronAsync(
+        jobName,
+        cron,
+        string.IsNullOrWhiteSpace(timeZone) ? "UTC" : timeZone,
+        cancellationToken);
+
+    return updated
+        ? Results.Ok(new { jobName, cron, timeZone = string.IsNullOrWhiteSpace(timeZone) ? "UTC" : timeZone })
+        : Results.NotFound();
 });
 
 app.MapPost("/enqueue-fail-always", async (IDurableStackClient jobs, CancellationToken cancellationToken) =>

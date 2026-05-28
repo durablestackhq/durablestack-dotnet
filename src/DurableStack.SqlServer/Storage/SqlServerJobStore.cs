@@ -245,6 +245,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 status,
                 payload_json,
                 scheduled_for_utc,
+                schedule_slot_utc,
                 started_at_utc,
                 completed_at_utc,
                 attempt,
@@ -280,6 +281,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 status,
                 payload_json,
                 scheduled_for_utc,
+                schedule_slot_utc,
                 started_at_utc,
                 completed_at_utc,
                 attempt,
@@ -304,6 +306,106 @@ public sealed class SqlServerJobStore : IDurableJobStore
         }
 
         return runs;
+    }
+
+    public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
+        bool includeDisabled,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                name,
+                job_type,
+                cron_expression,
+                time_zone,
+                max_attempts,
+                enabled,
+                next_run_at_utc
+            from {_jobsTable}
+            where schedule_type = N'cron'
+              and cron_expression is not null
+              and (@include_disabled = 1 or enabled = 1)
+            order by name asc;
+            """;
+
+        var jobs = new List<RecurringJobState>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@include_disabled", includeDisabled);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            jobs.Add(new RecurringJobState
+            {
+                JobName = reader.GetString(reader.GetOrdinal("name")),
+                JobType = reader.GetString(reader.GetOrdinal("job_type")),
+                CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
+                TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
+                MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                NextRunAtUtc = AsOptionalUtcDateTimeOffset(reader, "next_run_at_utc") ?? DateTimeOffset.MinValue,
+            });
+        }
+
+        return jobs;
+    }
+
+    public async Task<bool> SetRecurringJobEnabledAsync(
+        string jobName,
+        bool enabled,
+        DateTimeOffset? nextRunAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_jobsTable}
+            set
+                enabled = @enabled,
+                next_run_at_utc = @next_run_at_utc,
+                updated_at_utc = SYSUTCDATETIME()
+            where name = @name
+              and schedule_type = N'cron';
+            """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@enabled", enabled);
+        command.Parameters.AddWithValue("@next_run_at_utc", (object?)nextRunAtUtc?.UtcDateTime ?? DBNull.Value);
+        command.Parameters.AddWithValue("@name", jobName);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    public async Task<bool> UpdateRecurringJobScheduleAsync(
+        string jobName,
+        string cronExpression,
+        string timeZone,
+        DateTimeOffset nextRunAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_jobsTable}
+            set
+                cron_expression = @cron_expression,
+                time_zone = @time_zone,
+                next_run_at_utc = @next_run_at_utc,
+                updated_at_utc = SYSUTCDATETIME()
+            where name = @name
+              and schedule_type = N'cron';
+            """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@cron_expression", cronExpression);
+        command.Parameters.AddWithValue("@time_zone", timeZone);
+        command.Parameters.AddWithValue("@next_run_at_utc", nextRunAtUtc.UtcDateTime);
+        command.Parameters.AddWithValue("@name", jobName);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task<int> PruneHistoricalRunsAsync(
@@ -354,6 +456,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 time_zone = @time_zone,
                 enabled = 1,
                 max_attempts = @max_attempts,
+                next_run_at_utc = @next_run_at_utc,
                 updated_at_utc = SYSUTCDATETIME()
             where name = @name;
 
@@ -406,8 +509,11 @@ public sealed class SqlServerJobStore : IDurableJobStore
         var sql = $"""
             select top (@batch_size)
                 name,
+                job_type,
                 cron_expression,
                 time_zone,
+                max_attempts,
+                enabled,
                 next_run_at_utc
             from {_jobsTable}
             where enabled = 1
@@ -431,8 +537,11 @@ public sealed class SqlServerJobStore : IDurableJobStore
             jobs.Add(new RecurringJobState
             {
                 JobName = reader.GetString(reader.GetOrdinal("name")),
+                JobType = reader.GetString(reader.GetOrdinal("job_type")),
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
+                MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
                 NextRunAtUtc = AsUtcDateTimeOffset(reader, "next_run_at_utc"),
             });
         }
@@ -594,6 +703,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 ? null
                 : reader.GetString(reader.GetOrdinal("payload_json")),
             ScheduledForUtc = AsUtcDateTimeOffset(reader, "scheduled_for_utc"),
+            ScheduleSlotUtc = AsOptionalUtcDateTimeOffset(reader, "schedule_slot_utc"),
             StartedAtUtc = reader.IsDBNull(reader.GetOrdinal("started_at_utc"))
                 ? null
                 : AsUtcDateTimeOffset(reader, "started_at_utc"),
@@ -618,6 +728,31 @@ public sealed class SqlServerJobStore : IDurableJobStore
     {
         var value = reader.GetDateTime(reader.GetOrdinal(column));
         return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    }
+
+    private static DateTimeOffset? AsOptionalUtcDateTimeOffset(SqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetDateTime(ordinal);
+        return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    }
+
+    private static int TryGetOrdinal(SqlDataReader reader, string column)
+    {
+        for (var i = 0; i < reader.FieldCount; i++)
+        {
+            if (string.Equals(reader.GetName(i), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private string BuildInitMigrationSql()

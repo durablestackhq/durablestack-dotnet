@@ -383,6 +383,7 @@ public static class ServiceCollectionExtensions
                 provider.GetRequiredService<DurableStackOptions>()));
         services.AddSingleton<IRecurringJobScheduler, RecurringJobScheduler>();
         services.AddSingleton<IRecurringJobInitializer, RecurringJobInitializer>();
+        services.AddSingleton<IDurableScheduleAdminService, DurableScheduleAdminService>();
         services.AddSingleton<DurableStackEventFactory>();
         services.AddSingleton<IDurableStackProcessor, DurableStackProcessor>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableStackEventSink, NoOpDurableStackEventSink>());
