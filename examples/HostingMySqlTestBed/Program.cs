@@ -17,6 +17,7 @@ builder.Configuration
 builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
+    options.ConnectionStringName = "DurableStack";
 });
 // Optional additional sink for local debugging:
 // builder.Services.UseDurableStackLoggingEventSink();

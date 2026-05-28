@@ -19,7 +19,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Hosting</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>beta.1</VersionSuffix>
+    <VersionSuffix>beta.2</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>Generic hosting and dependency injection integration for DurableStack.</Description>

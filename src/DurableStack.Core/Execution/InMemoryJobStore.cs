@@ -146,6 +146,32 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    public Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var toDelete = _runs.Values
+                .Where(run =>
+                    (run.Status == "succeeded" || run.Status == "failed")
+                    && run.CompletedAtUtc.HasValue
+                    && run.CompletedAtUtc.Value < completedBeforeUtc)
+                .OrderBy(run => run.CompletedAtUtc)
+                .Take(Math.Max(1, batchSize))
+                .Select(run => run.Id)
+                .ToList();
+
+            foreach (var runId in toDelete)
+            {
+                _runs.Remove(runId);
+            }
+
+            return Task.FromResult(toDelete.Count);
+        }
+    }
+
     public Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,

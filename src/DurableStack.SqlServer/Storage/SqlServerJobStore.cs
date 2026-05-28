@@ -306,6 +306,35 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            ;with to_delete as (
+                select top (@batch_size) id
+                from {_runsTable} with (READPAST)
+                where status in (N'succeeded', N'failed')
+                  and completed_at_utc is not null
+                  and completed_at_utc < @completed_before_utc
+                order by completed_at_utc asc
+            )
+            delete r
+            from {_runsTable} as r
+            inner join to_delete on r.id = to_delete.id;
+            """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@batch_size", Math.Max(1, batchSize));
+        command.Parameters.AddWithValue("@completed_before_utc", completedBeforeUtc.UtcDateTime);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -600,6 +629,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         var runsDueIndexName = $"ix_{_runsTableName}_due";
         var runsLeaseIndexName = $"ix_{_runsTableName}_lease";
         var runsJobNameIndexName = $"ix_{_runsTableName}_job_name";
+        var runsCompletedIndexName = $"ix_{_runsTableName}_completed";
         var runsRecurringUniqueIndexName = $"ix_{_runsTableName}_recurring_slot_unique";
         var jobsDueIndexName = $"ix_{_jobsTableName}_due";
 
@@ -672,6 +702,11 @@ public sealed class SqlServerJobStore : IDurableJobStore
             if not exists (select 1 from sys.indexes where name = N'{runsJobNameIndexName}' and object_id = object_id(N'{runsObject}'))
             begin
                 create index [{runsJobNameIndexName}] on {_runsTable} (job_name);
+            end;
+
+            if not exists (select 1 from sys.indexes where name = N'{runsCompletedIndexName}' and object_id = object_id(N'{runsObject}'))
+            begin
+                create index [{runsCompletedIndexName}] on {_runsTable} (status, completed_at_utc);
             end;
 
             if not exists (select 1 from sys.indexes where name = N'{runsRecurringUniqueIndexName}' and object_id = object_id(N'{runsObject}'))

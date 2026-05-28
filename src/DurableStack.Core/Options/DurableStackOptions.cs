@@ -21,9 +21,13 @@ public sealed class DurableStackOptions
 
     public DurableStackRecurringOptions Recurring { get; } = new();
 
+    public DurableStackRetentionOptions Retention { get; } = new();
+
     public DurableStackJobRegistrationOptions JobRegistration { get; } = new();
 
     public string WorkerName { get; set; } = Environment.MachineName;
+
+    public string ConnectionStringName { get; set; } = "DurableStack";
 
     public string? DatabaseTablePrefix { get; set; }
 

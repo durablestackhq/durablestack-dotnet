@@ -13,7 +13,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Worker</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>beta.1</VersionSuffix>
+    <VersionSuffix>beta.2</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>Worker service hosting integration for DurableStack durable jobs.</Description>

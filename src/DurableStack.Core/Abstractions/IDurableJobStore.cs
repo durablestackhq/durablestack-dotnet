@@ -35,6 +35,11 @@ public interface IDurableJobStore
 
     Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken);
 
+    Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken);
+
     Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,

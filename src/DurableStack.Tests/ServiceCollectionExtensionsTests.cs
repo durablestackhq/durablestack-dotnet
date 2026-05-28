@@ -234,6 +234,47 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_uses_provider_aware_retention_defaults()
+    {
+        var inMemoryServices = new ServiceCollection();
+        inMemoryServices.AddDurableStack();
+
+        using var inMemoryProvider = inMemoryServices.BuildServiceProvider();
+        var inMemoryOptions = inMemoryProvider.GetRequiredService<DurableStackOptions>();
+        Assert.Equal(3600d, inMemoryOptions.Retention.RunRetentionSeconds);
+
+        var postgresServices = new ServiceCollection();
+        postgresServices.AddDurableStack(options =>
+        {
+            options.StorageProvider = DurableStackStorageProvider.Postgres;
+            options.Postgres.ConnectionString = "Host=localhost;Database=durable_stack;Username=postgres;Password=postgres";
+        });
+
+        using var postgresProvider = postgresServices.BuildServiceProvider();
+        var postgresOptions = postgresProvider.GetRequiredService<DurableStackOptions>();
+        Assert.Equal(86400d, postgresOptions.Retention.RunRetentionSeconds);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_retention_settings_to_defaults()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack(options =>
+        {
+            options.Retention.RunRetentionSeconds = 0;
+            options.Retention.SweepIntervalSeconds = -10;
+            options.Retention.DeleteBatchSize = 0;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(3600d, options.Retention.RunRetentionSeconds);
+        Assert.Equal(300d, options.Retention.SweepIntervalSeconds);
+        Assert.Equal(1000, options.Retention.DeleteBatchSize);
+    }
+
+    [Fact]
     public void AddDurableJob_throws_when_job_was_already_discovered()
     {
         var services = new ServiceCollection();

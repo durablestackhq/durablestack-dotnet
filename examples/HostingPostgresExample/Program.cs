@@ -16,6 +16,7 @@ builder.Configuration
 builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
+    options.ConnectionStringName = "DurableStack";
 });
 // Uncomment to surface DurableStack lifecycle events (including worker heartbeats) in logs.
 // builder.Services.UseDurableStackLoggingEventSink();

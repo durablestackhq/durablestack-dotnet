@@ -360,6 +360,29 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        var limit = Math.Max(1, batchSize);
+        var sql = $"""
+            delete from {_runsTable}
+            where status in ('succeeded', 'failed')
+              and completed_at_utc is not null
+              and completed_at_utc < @completed_before_utc
+            order by completed_at_utc asc
+            limit {limit};
+            """;
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@completed_before_utc", completedBeforeUtc.UtcDateTime);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -698,6 +721,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_due")} on {_runsTable} (status, scheduled_for_utc);");
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_lease")} on {_runsTable} (lease_until_utc);");
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_job_name")} on {_runsTable} (job_name);");
+        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_completed")} on {_runsTable} (status, completed_at_utc);");
         sb.AppendLine($"create unique index if not exists {QuoteIndex($"ix_{_runsTableName}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc);");
 
         sb.AppendLine($"create table if not exists {_locksTable} (");

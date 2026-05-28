@@ -308,6 +308,36 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            with to_delete as (
+                select id
+                from {_runsTable}
+                where status in ('succeeded', 'failed')
+                  and completed_at_utc is not null
+                  and completed_at_utc < @completed_before_utc
+                order by completed_at_utc asc
+                limit @batch_size
+            )
+            delete from {_runsTable} as r
+            using to_delete
+            where r.id = to_delete.id;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("completed_before_utc", completedBeforeUtc.UtcDateTime);
+        command.Parameters.AddWithValue("batch_size", Math.Max(1, batchSize));
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -628,6 +658,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists ix_{_runsTable}_due on {_runsTable} (status, scheduled_for_utc);");
         sb.AppendLine($"create index if not exists ix_{_runsTable}_lease on {_runsTable} (lease_until_utc);");
         sb.AppendLine($"create index if not exists ix_{_runsTable}_job_name on {_runsTable} (job_name);");
+        sb.AppendLine($"create index if not exists ix_{_runsTable}_completed on {_runsTable} (status, completed_at_utc);");
         sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc timestamptz null;");
         sb.AppendLine($"create unique index if not exists ix_{_runsTable}_recurring_slot_unique on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
 
