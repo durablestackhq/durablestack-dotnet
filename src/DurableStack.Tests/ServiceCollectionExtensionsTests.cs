@@ -7,6 +7,7 @@ using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;
 using DurableStack.Core.Models;
+using DurableStack.Core.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -194,6 +195,42 @@ public sealed class ServiceCollectionExtensionsTests
 
         var registrationDescriptors = services.Where(d => d.ServiceType == typeof(DurableJobRegistration)).ToList();
         Assert.Empty(registrationDescriptors);
+    }
+
+    [Fact]
+    public void AddDurableStack_uses_seconds_aliases_for_poll_and_lease()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.PollIntervalSeconds = 0.5;
+            options.LeaseDurationSeconds = 5;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(TimeSpan.FromMilliseconds(500), options.PollInterval);
+        Assert.Equal(TimeSpan.FromSeconds(5), options.LeaseDuration);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_poll_and_lease_to_defaults()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.PollInterval = TimeSpan.Zero;
+            options.LeaseDuration = TimeSpan.FromSeconds(-1);
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(TimeSpan.FromSeconds(5), options.PollInterval);
+        Assert.Equal(TimeSpan.FromSeconds(30), options.LeaseDuration);
     }
 
     [Fact]

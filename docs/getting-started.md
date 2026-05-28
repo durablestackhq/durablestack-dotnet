@@ -34,9 +34,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -48,9 +45,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackPostgres(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -62,9 +56,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -76,9 +67,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -90,9 +78,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackSqlServer(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -104,9 +89,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackSqlServer(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -118,9 +100,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackSqlite(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -132,9 +111,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackSqlite(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -144,13 +120,24 @@ Provider-agnostic mode from configuration:
 builder.Services.AddDurableStack(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
 In this mode, `DurableStack:StorageProvider` selects the backing store and provider-specific connection options are read from configuration.
+
+Optional worker tuning can be set in configuration:
+
+```json
+{
+  "DurableStack": {
+    "PollIntervalSeconds": 0.5,
+    "BatchSize": 25,
+    "LeaseDurationSeconds": 5
+  }
+}
+```
+
+If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=50`, `LeaseDuration=30s`.
 
 In-memory local development:
 
