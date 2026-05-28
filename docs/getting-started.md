@@ -19,6 +19,13 @@ builder.Services.AddDurableStack(options =>
 
 Durable providers are opt-in. In-memory is the default and is useful for local development.
 
+Job registration is auto-discovered by default from the app assembly. Any public class implementing `IDurableJob` or `IDurableJob<TArgs>` is registered automatically.
+
+- Default job name: class name
+- Default max attempts: `3`
+- Add `[RecurringJob("...")]` to make a job scheduled
+- Without `[RecurringJob]`, a job is enqueue-only
+
 ASP.NET Core with PostgreSQL:
 
 ```csharp
@@ -27,9 +34,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -41,9 +45,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackPostgres(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -55,9 +56,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -69,9 +67,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -83,9 +78,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackSqlServer(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -97,9 +89,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackSqlServer(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -111,9 +100,6 @@ using DurableStack.Hosting.DependencyInjection;
 builder.Services.AddDurableStackSqlite(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -125,9 +111,6 @@ using DurableStack.Worker.Hosting;
 builder.AddDurableStackSqlite(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
@@ -137,13 +120,24 @@ Provider-agnostic mode from configuration:
 builder.Services.AddDurableStack(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
-    options.PollInterval = TimeSpan.FromMilliseconds(500);
-    options.BatchSize = 25;
-    options.LeaseDuration = TimeSpan.FromSeconds(30);
 });
 ```
 
 In this mode, `DurableStack:StorageProvider` selects the backing store and provider-specific connection options are read from configuration.
+
+Optional worker tuning can be set in configuration:
+
+```json
+{
+  "DurableStack": {
+    "PollIntervalSeconds": 0.5,
+    "BatchSize": 25,
+    "LeaseDurationSeconds": 5
+  }
+}
+```
+
+If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=50`, `LeaseDuration=30s`.
 
 In-memory local development:
 
@@ -153,6 +147,19 @@ builder.Services.AddDurableStack(options =>
     options.WorkerName = workerName;
 });
 ```
+
+## Non-hosted bootstrap (manual loop apps)
+
+If you are not running `DurableStackHostedService` (for example, in a manual console loop), initialize DurableStack once through the service provider:
+
+```csharp
+using DurableStack.Hosting.Hosting;
+
+using var provider = services.BuildServiceProvider();
+await provider.InitializeDurableStackAsync(CancellationToken.None);
+```
+
+This runs store migration + recurring schedule initialization. In hosted ASP.NET Core/worker scenarios, this is already handled automatically by `DurableStackHostedService`.
 
 ## Eventing credentials: config or explicit init
 
@@ -201,6 +208,28 @@ builder.Services
     {
         options.WorkerName = "api-worker";
         options.Recurring.CatchUpPolicy = RecurringCatchUpPolicy.SkipMissed;
+    });
+
+[DurableJob(Name = "worker-heartbeat")]
+[RecurringJob("*/5 * * * *", TimeZone = "America/Chicago")]
+public sealed class RecurringWorkerHeartbeatJob : IDurableJob
+{
+    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+```
+
+## Explicit registration (power-user mode)
+
+If you want full manual control, disable auto-discovery and register jobs explicitly:
+
+```csharp
+builder.Services
+    .AddDurableStack(options =>
+    {
+        options.JobRegistration.AutoDiscoverJobsFromAssembly = false;
     })
     .AddDurableJob<RecurringWorkerHeartbeatJob>("worker-heartbeat", job =>
     {

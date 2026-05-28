@@ -13,8 +13,8 @@ builder.Configuration
         optional: true,
         reloadOnChange: false);
 
-// Required: register DurableStack + hosted background processing using PostgreSQL storage.
-builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
+// Required: register DurableStack + hosted background processing using MySQL storage.
+builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
 });
@@ -27,9 +27,9 @@ builder.Logging.AddSimpleConsole();
 
 var app = builder.Build();
 
-app.Logger.LogInformation("DurableStack example started. Provider=Postgres WorkerName={WorkerName}", workerName);
+app.Logger.LogInformation("DurableStack example started. Provider=MySql WorkerName={WorkerName}", workerName);
 
-app.MapGet("/", () => "DurableStack Hosting PostgreSQL Test Bed");
+app.MapGet("/", () => "DurableStack Hosting MySQL Test Bed");
 
 app.MapPost("/migrate", async (IDurableStackStoreMigrator migrator, CancellationToken cancellationToken) =>
 {
@@ -161,7 +161,7 @@ app.MapPost("/enqueue-fail-custom", async (
         configuredMaxAttempts,
         cancellationToken);
 
-    return Results.Accepted($"/runs", new
+    return Results.Accepted("/runs", new
     {
         runId,
         endpoint = "/enqueue-fail-custom",

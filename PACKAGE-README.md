@@ -6,10 +6,20 @@ DurableStack provides durable background and scheduled jobs backed by relational
 
 ## Package selection
 
-- `DurableStack.Core`: core runtime + in-memory support (no extra provider package required for in-memory)
-- `DurableStack.Hosting`: generic hosting + dependency-injection integration and provider wiring
-- `DurableStack.Worker`: worker-service hosting integration
-- Provider packages: `DurableStack.Postgres`, `DurableStack.MySql`, `DurableStack.SqlServer`, `DurableStack.Sqlite`
+- Default quick start: `DurableStack.Hosting` (bundle-style package that brings hosting/DI + relational provider packages)
+- Worker-host quick start: `DurableStack.Worker`
+- Minimal/custom: `DurableStack.Core` + one provider package
+- In-memory only: `DurableStack.Core` (in-memory support is built in)
+
+Provider packages: `DurableStack.Postgres`, `DurableStack.MySql`, `DurableStack.SqlServer`, `DurableStack.Sqlite`.
+
+## Job registration defaults
+
+- `AddDurableStack(...)` auto-discovers public `IDurableJob` and `IDurableJob<TArgs>` classes from the app assembly
+- Default job name: class name
+- Default max attempts: `3`
+- Add `[RecurringJob("...")]` to schedule recurring jobs
+- Without `[RecurringJob]`, jobs are enqueue-only
 
 ## Repository and docs
 

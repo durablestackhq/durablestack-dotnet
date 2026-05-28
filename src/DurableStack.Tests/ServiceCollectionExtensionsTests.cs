@@ -2,10 +2,12 @@ using System;
 using System.Linq;
 using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Hosting.Events;
+using DurableStack.Hosting.Hosting;
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;
 using DurableStack.Core.Models;
+using DurableStack.Core.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -138,6 +140,138 @@ public sealed class ServiceCollectionExtensionsTests
         Assert.Contains(sinks, sink => sink is TestEventSink);
     }
 
+    [Fact]
+    public void AddDurableJobsFromAssemblyContaining_registers_jobs_with_defaults_and_attributes()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableJobsFromAssembly<DiscoveryDefaultJob>();
+
+        var registrations = services
+            .Where(d => d.ServiceType == typeof(DurableJobRegistration))
+            .Select(d => Assert.IsType<DurableJobRegistration>(d.ImplementationInstance))
+            .ToList();
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryDefaultJob)
+            && x.JobName == nameof(DiscoveryDefaultJob)
+            && x.MaxAttempts == 3
+            && x.CronExpression is null);
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryRecurringJob)
+            && x.JobName == "discovery-recurring-job"
+            && x.MaxAttempts == 5
+            && x.CronExpression == "*/5 * * * *"
+            && x.TimeZone == "UTC");
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryArgsJob)
+            && x.PayloadType == typeof(DiscoveryPayload)
+            && x.MaxAttempts == 4);
+    }
+
+    [Fact]
+    public void AddDurableJobsFromAssemblyContaining_throws_when_duplicate_name_exists()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableJob<NoArgsTestJob>(nameof(DiscoveryDefaultJob));
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddDurableJobsFromAssembly<DiscoveryDefaultJob>());
+
+        Assert.Contains("already registered", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void AddDurableStack_can_disable_auto_discovery()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.JobRegistration.AutoDiscoverJobsFromAssembly = false;
+        });
+
+        var registrationDescriptors = services.Where(d => d.ServiceType == typeof(DurableJobRegistration)).ToList();
+        Assert.Empty(registrationDescriptors);
+    }
+
+    [Fact]
+    public void AddDurableStack_uses_seconds_aliases_for_poll_and_lease()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.PollIntervalSeconds = 0.5;
+            options.LeaseDurationSeconds = 5;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(TimeSpan.FromMilliseconds(500), options.PollInterval);
+        Assert.Equal(TimeSpan.FromSeconds(5), options.LeaseDuration);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_poll_and_lease_to_defaults()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.PollInterval = TimeSpan.Zero;
+            options.LeaseDuration = TimeSpan.FromSeconds(-1);
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(TimeSpan.FromSeconds(5), options.PollInterval);
+        Assert.Equal(TimeSpan.FromSeconds(30), options.LeaseDuration);
+    }
+
+    [Fact]
+    public void AddDurableJob_throws_when_job_was_already_discovered()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableJobsFromAssembly<DiscoveryDefaultJob>();
+
+        var exception = Assert.Throws<InvalidOperationException>(() =>
+            services.AddDurableJob<DiscoveryDefaultJob>(nameof(DiscoveryDefaultJob)));
+
+        Assert.Contains("already registered", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task InitializeDurableStackAsync_runs_bootstrap_once()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDurableStack(options =>
+        {
+            options.JobRegistration.AutoDiscoverJobsFromAssembly = false;
+        });
+
+        services.AddSingleton<CountingMigrator>();
+        services.AddSingleton<IDurableStackStoreMigrator>(provider => provider.GetRequiredService<CountingMigrator>());
+        services.AddSingleton<CountingRecurringInitializer>();
+        services.AddSingleton<IRecurringJobInitializer>(provider => provider.GetRequiredService<CountingRecurringInitializer>());
+
+        using var provider = services.BuildServiceProvider();
+
+        await provider.InitializeDurableStackAsync();
+        await provider.InitializeDurableStackAsync();
+
+        var migrator = provider.GetRequiredService<CountingMigrator>();
+        var recurring = provider.GetRequiredService<CountingRecurringInitializer>();
+
+        Assert.Equal(1, migrator.CallCount);
+        Assert.Equal(1, recurring.CallCount);
+    }
+
     private sealed class NoArgsTestJob : IDurableJob
     {
         public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
@@ -163,6 +297,28 @@ public sealed class ServiceCollectionExtensionsTests
     {
         public Task PublishAsync(DurableStackEvent @event, CancellationToken cancellationToken = default)
         {
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingMigrator : IDurableStackStoreMigrator
+    {
+        public int CallCount { get; private set; }
+
+        public Task MigrateAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingRecurringInitializer : IRecurringJobInitializer
+    {
+        public int CallCount { get; private set; }
+
+        public Task InitializeAsync(CancellationToken cancellationToken)
+        {
+            CallCount++;
             return Task.CompletedTask;
         }
     }

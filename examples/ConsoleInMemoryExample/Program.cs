@@ -1,8 +1,8 @@
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Options;
-using DurableStack.Core.Scheduling;
 using DurableStack.Hosting.DependencyInjection;
+using DurableStack.Hosting.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
@@ -19,6 +19,7 @@ services.AddLogging(logging =>
     logging.SetMinimumLevel(LogLevel.Information);
 });
 
+// Required: register DurableStack services; this non-hosted sample uses in-memory storage.
 services.AddDurableStack(options =>
 {
     options.StorageProvider = DurableStackStorageProvider.InMemory;
@@ -28,22 +29,14 @@ services.AddDurableStack(options =>
     options.LeaseDuration = TimeSpan.FromSeconds(5);
 });
 
-services.AddDurableJob<ConsoleHeartbeatJob>("console-heartbeat-every-minute", job =>
-{
-    job.RunOnCron("* * * * *", timeZone: "UTC");
-    job.WithMaxAttempts(3);
-});
-
 using var provider = services.BuildServiceProvider();
 
 var startupLogger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Startup");
-var migrator = provider.GetRequiredService<IDurableStackStoreMigrator>();
-var recurringInitializer = provider.GetRequiredService<IRecurringJobInitializer>();
 var processor = provider.GetRequiredService<IDurableStackProcessor>();
 var options = provider.GetRequiredService<DurableStackOptions>();
 
-await migrator.MigrateAsync(CancellationToken.None);
-await recurringInitializer.InitializeAsync(CancellationToken.None);
+// Required for non-hosted apps: run migrations and recurring job initialization once.
+await provider.InitializeDurableStackAsync(CancellationToken.None);
 
 using var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, args) =>
@@ -70,21 +63,3 @@ while (!cts.IsCancellationRequested)
 }
 
 startupLogger.LogInformation("Console in-memory example stopped.");
-
-public sealed class ConsoleHeartbeatJob : IDurableJob
-{
-    private readonly ILogger<ConsoleHeartbeatJob> _logger;
-
-    public ConsoleHeartbeatJob(ILogger<ConsoleHeartbeatJob> logger)
-    {
-        _logger = logger;
-    }
-
-    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
-    {
-        _logger.LogInformation(
-            "[ConsoleInMemoryExample] Recurring heartbeat executed. RunId={RunId}",
-            context.RunId);
-        return Task.CompletedTask;
-    }
-}
