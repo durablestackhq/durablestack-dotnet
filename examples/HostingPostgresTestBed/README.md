@@ -72,19 +72,24 @@ It is intended for API/App integration testing where you want predictable job ou
 
 - `GET /schedules`
   - Lists recurring schedules (enabled and disabled).
+  - Response shape: `{ count, items }`.
 
 - `POST /schedules/{jobName}/disable`
   - Disables a recurring schedule.
+  - Returns `404` when schedule name is unknown.
 
 - `POST /schedules/{jobName}/enable`
   - Re-enables a recurring schedule.
+  - Returns `404` when schedule name is unknown.
 
 - `POST /schedules/{jobName}/run-now`
   - Enqueues the recurring job immediately as an ad-hoc run.
+  - Returns `404` when schedule name is unknown.
 
 - `PUT /schedules/{jobName}/cron?cron=<expr>&timeZone=<iana>`
   - Updates cron expression/time zone for a recurring schedule.
   - `timeZone` defaults to `UTC` when omitted.
+  - Returns `400` for invalid cron/time zone values.
 
 ## Notes
 

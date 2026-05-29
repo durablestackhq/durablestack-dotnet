@@ -33,7 +33,8 @@ public sealed class DurableScheduleAdminServiceTests
         Assert.True(disabled);
 
         var listDisabled = await admin.ListScheduledJobsAsync();
-        Assert.False(Assert.Single(listDisabled).Enabled);
+        var disabledSchedule = Assert.Single(listDisabled);
+        Assert.False(disabledSchedule.Enabled);
 
         var cronUpdated = await admin.UpdateScheduledJobCronAsync("heartbeat", "*/5 * * * *", "UTC");
         Assert.True(cronUpdated);
@@ -43,7 +44,9 @@ public sealed class DurableScheduleAdminServiceTests
 
         var enabled = await admin.SetScheduledJobEnabledAsync("heartbeat", enabled: true);
         Assert.True(enabled);
-        Assert.True(Assert.Single(await admin.ListScheduledJobsAsync()).Enabled);
+        var enabledSchedule = Assert.Single(await admin.ListScheduledJobsAsync());
+        Assert.True(enabledSchedule.Enabled);
+        Assert.True(enabledSchedule.NextRunAtUtc > DateTimeOffset.UtcNow);
 
         var queued = await admin.RunScheduledJobNowAsync("heartbeat");
         Assert.True(queued);
@@ -51,5 +54,61 @@ public sealed class DurableScheduleAdminServiceTests
         var runs = await store.GetRunsAsync(CancellationToken.None);
         Assert.Single(runs);
         Assert.Null(runs[0].ScheduleSlotUtc);
+    }
+
+    [Fact]
+    public async Task UpdateScheduledJobCronAsync_recomputes_next_run()
+    {
+        var store = new InMemoryJobStore();
+        var registration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(object),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { registration });
+        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+
+        IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
+
+        var updated = await admin.UpdateScheduledJobCronAsync("heartbeat", "*/5 * * * *", "UTC");
+        Assert.True(updated);
+
+        var schedule = Assert.Single(await admin.ListScheduledJobsAsync());
+        Assert.Equal("*/5 * * * *", schedule.CronExpression);
+        var now = DateTimeOffset.UtcNow;
+        Assert.True(schedule.NextRunAtUtc > now);
+        Assert.True(schedule.NextRunAtUtc <= now.AddMinutes(6));
+    }
+
+    [Fact]
+    public async Task RunScheduledJobNowAsync_does_not_modify_schedule_definition()
+    {
+        var store = new InMemoryJobStore();
+        var registration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(object),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { registration });
+        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+
+        IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
+        var before = Assert.Single(await admin.ListScheduledJobsAsync());
+
+        var queued = await admin.RunScheduledJobNowAsync("heartbeat");
+        Assert.True(queued);
+
+        var after = Assert.Single(await admin.ListScheduledJobsAsync());
+        Assert.Equal(before.CronExpression, after.CronExpression);
+        Assert.Equal(before.TimeZone, after.TimeZone);
+        Assert.Equal(before.Enabled, after.Enabled);
     }
 }

@@ -1,4 +1,5 @@
 using DurableStack.Core.Execution;
+using DurableStack.Core.Models;
 
 namespace DurableStack.Tests;
 
@@ -47,5 +48,36 @@ public sealed class InMemoryRetentionTests
         var runs = await store.GetRunsAsync(CancellationToken.None);
         Assert.Single(runs);
         Assert.Equal("pending", runs[0].Status);
+    }
+
+    [Fact]
+    public async Task PruneHistoricalRunsAsync_does_not_remove_recurring_schedule_definitions()
+    {
+        var store = new InMemoryJobStore();
+        var registration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(object),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        await store.UpsertRecurringJobAsync(registration, DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
+        var runId = await store.EnqueueAsync(
+            "heartbeat",
+            "heartbeat-type",
+            payloadJson: null,
+            DateTimeOffset.UtcNow,
+            maxAttempts: 3,
+            CancellationToken.None);
+
+        await store.MarkSucceededAsync(runId, CancellationToken.None);
+        _ = await store.PruneHistoricalRunsAsync(DateTimeOffset.UtcNow.AddMinutes(1), batchSize: 100, CancellationToken.None);
+
+        var schedules = await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None);
+        Assert.Single(schedules);
+        Assert.Equal("heartbeat", schedules[0].JobName);
     }
 }

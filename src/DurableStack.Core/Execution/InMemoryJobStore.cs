@@ -146,6 +146,41 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    public Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runs.Values
+                .Where(x => x.JobName.Equals(jobName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.ScheduledForUtc)
+                .Take(Math.Max(1, take))
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<JobRunRecord>>(result);
+        }
+    }
+
+    public Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runs.Values
+                .Where(x => x.ScheduleSlotUtc is null)
+                .OrderByDescending(x => x.ScheduledForUtc)
+                .Take(Math.Max(1, take))
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<JobRunRecord>>(result);
+        }
+    }
+
     public Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)

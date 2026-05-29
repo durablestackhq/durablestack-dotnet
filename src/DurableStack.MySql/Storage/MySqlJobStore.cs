@@ -362,6 +362,92 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var limit = Math.Max(1, take);
+        var sql = $"""
+            select
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where job_name = @job_name
+            order by scheduled_for_utc desc
+            limit {limit};
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@job_name", jobName);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var limit = Math.Max(1, take);
+        var sql = $"""
+            select
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where schedule_slot_utc is null
+            order by scheduled_for_utc desc
+            limit {limit};
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
     public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
