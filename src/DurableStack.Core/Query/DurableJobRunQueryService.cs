@@ -49,21 +49,11 @@ public sealed class DurableJobRunQueryService : IDurableJobRunQueryService
         int take = 100,
         CancellationToken cancellationToken = default)
     {
-        var runs = await _store.GetRunsAsync(cancellationToken);
-        return runs
-            .Where(x => x.JobName.Equals(jobName, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(x => x.ScheduledForUtc)
-            .Take(Math.Max(1, take))
-            .ToList();
+        return await _store.GetRunsByJobNameAsync(jobName, Math.Max(1, take), cancellationToken);
     }
 
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(int take = 100, CancellationToken cancellationToken = default)
     {
-        var runs = await _store.GetRunsAsync(cancellationToken);
-        return runs
-            .Where(x => x.ScheduleSlotUtc is null)
-            .OrderByDescending(x => x.ScheduledForUtc)
-            .Take(Math.Max(1, take))
-            .ToList();
+        return await _store.GetEnqueuedRunsAsync(Math.Max(1, take), cancellationToken);
     }
 }

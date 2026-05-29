@@ -286,3 +286,10 @@ Run query endpoints in example APIs:
 - `GET /runs`
 - `GET /runs/{id}`
 - `GET /runs/status/{status}?take=50` where status is `pending`, `leased`, `succeeded`, or `failed`
+- `GET /runs/job/{jobName}?take=50`
+- `GET /runs/enqueued?take=50`
+
+Retention cleanup and schedule administration are independent:
+
+- retention only prunes terminal run history
+- recurring schedule definitions are not removed by retention

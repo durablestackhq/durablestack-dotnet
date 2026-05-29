@@ -124,7 +124,7 @@ app.MapGet("/schedules", async (IDurableScheduleAdminService schedules, Cancella
         nextRunAtUtc = job.Enabled && job.NextRunAtUtc > DateTimeOffset.MinValue ? job.NextRunAtUtc : (DateTimeOffset?)null,
     });
 
-    return Results.Ok(response);
+    return Results.Ok(new { count = jobs.Count, items = response });
 });
 
 app.MapPost("/schedules/{jobName}/disable", async (
@@ -132,8 +132,15 @@ app.MapPost("/schedules/{jobName}/disable", async (
     IDurableScheduleAdminService schedules,
     CancellationToken cancellationToken) =>
 {
+    if (string.IsNullOrWhiteSpace(jobName))
+    {
+        return Results.BadRequest(new { error = "jobName is required." });
+    }
+
     var updated = await schedules.SetScheduledJobEnabledAsync(jobName, enabled: false, cancellationToken);
-    return updated ? Results.Ok(new { jobName, enabled = false }) : Results.NotFound();
+    return updated
+        ? Results.Ok(new { jobName, enabled = false, action = "disabled" })
+        : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
 });
 
 app.MapPost("/schedules/{jobName}/enable", async (
@@ -141,8 +148,15 @@ app.MapPost("/schedules/{jobName}/enable", async (
     IDurableScheduleAdminService schedules,
     CancellationToken cancellationToken) =>
 {
+    if (string.IsNullOrWhiteSpace(jobName))
+    {
+        return Results.BadRequest(new { error = "jobName is required." });
+    }
+
     var updated = await schedules.SetScheduledJobEnabledAsync(jobName, enabled: true, cancellationToken);
-    return updated ? Results.Ok(new { jobName, enabled = true }) : Results.NotFound();
+    return updated
+        ? Results.Ok(new { jobName, enabled = true, action = "enabled" })
+        : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
 });
 
 app.MapPost("/schedules/{jobName}/run-now", async (
@@ -150,8 +164,15 @@ app.MapPost("/schedules/{jobName}/run-now", async (
     IDurableScheduleAdminService schedules,
     CancellationToken cancellationToken) =>
 {
+    if (string.IsNullOrWhiteSpace(jobName))
+    {
+        return Results.BadRequest(new { error = "jobName is required." });
+    }
+
     var queued = await schedules.RunScheduledJobNowAsync(jobName, cancellationToken);
-    return queued ? Results.Accepted() : Results.NotFound();
+    return queued
+        ? Results.Accepted($"/runs/job/{jobName}", new { jobName, action = "queued-now" })
+        : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
 });
 
 app.MapPut("/schedules/{jobName}/cron", async (
@@ -161,15 +182,39 @@ app.MapPut("/schedules/{jobName}/cron", async (
     IDurableScheduleAdminService schedules,
     CancellationToken cancellationToken) =>
 {
-    var updated = await schedules.UpdateScheduledJobCronAsync(
-        jobName,
-        cron,
-        string.IsNullOrWhiteSpace(timeZone) ? "UTC" : timeZone,
-        cancellationToken);
+    if (string.IsNullOrWhiteSpace(jobName))
+    {
+        return Results.BadRequest(new { error = "jobName is required." });
+    }
+
+    if (string.IsNullOrWhiteSpace(cron))
+    {
+        return Results.BadRequest(new { error = "cron is required." });
+    }
+
+    var normalizedTimeZone = string.IsNullOrWhiteSpace(timeZone) ? "UTC" : timeZone;
+    bool updated;
+
+    try
+    {
+        updated = await schedules.UpdateScheduledJobCronAsync(
+            jobName,
+            cron,
+            normalizedTimeZone,
+            cancellationToken);
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new
+        {
+            error = "Invalid cron or time zone.",
+            detail = ex.Message,
+        });
+    }
 
     return updated
-        ? Results.Ok(new { jobName, cron, timeZone = string.IsNullOrWhiteSpace(timeZone) ? "UTC" : timeZone })
-        : Results.NotFound();
+        ? Results.Ok(new { jobName, cron, timeZone = normalizedTimeZone, action = "schedule-updated" })
+        : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
 });
 
 app.MapPost("/enqueue-fail-always", async (IDurableStackClient jobs, CancellationToken cancellationToken) =>

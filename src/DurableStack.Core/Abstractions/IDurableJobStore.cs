@@ -35,6 +35,15 @@ public interface IDurableJobStore
 
     Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
+        int take,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken);
