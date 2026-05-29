@@ -16,7 +16,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.SqlServer</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>beta.2</VersionSuffix>
+    <VersionSuffix>beta.3</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>SQL Server provider for DurableStack durable job storage and claiming.</Description>
