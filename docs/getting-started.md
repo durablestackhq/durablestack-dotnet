@@ -125,6 +125,16 @@ builder.Services.AddDurableStack(builder.Configuration, options =>
 
 In this mode, `DurableStack:StorageProvider` selects the backing store and provider-specific connection options are read from configuration.
 
+If your host app uses a non-default connection string name, set `ConnectionStringName`:
+
+```csharp
+builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
+{
+    options.WorkerName = workerName;
+    options.ConnectionStringName = "acmewidgets_prod";
+});
+```
+
 Optional worker tuning can be set in configuration:
 
 ```json
@@ -138,6 +148,35 @@ Optional worker tuning can be set in configuration:
 ```
 
 If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=50`, `LeaseDuration=30s`.
+
+## Data retention
+
+DurableStack can automatically prune old terminal runs (`succeeded` and `failed`) to prevent unbounded growth.
+
+Default retention windows:
+
+- In-memory: `1 hour`
+- Database providers: `24 hours`
+
+Default cleanup cadence:
+
+- Sweep interval: `5 minutes`
+- Delete batch size: `1000`
+
+Configuration example:
+
+```json
+{
+  "DurableStack": {
+    "Retention": {
+      "Enabled": true,
+      "RunRetentionSeconds": 86400,
+      "SweepIntervalSeconds": 300,
+      "DeleteBatchSize": 1000
+    }
+  }
+}
+```
 
 In-memory local development:
 
@@ -240,8 +279,19 @@ builder.Services
 
 For timezone guidance and Windows/IANA mapping, see `docs/timezones.md`.
 
+For runtime recurring schedule controls (list/disable/enable/run-now/cron updates), see `docs/scheduled-job-management.md`.
+
 Run query endpoints in example APIs:
 
 - `GET /runs`
 - `GET /runs/{id}`
 - `GET /runs/status/{status}?take=50` where status is `pending`, `leased`, `succeeded`, or `failed`
+- `GET /runs/job/{jobName}?take=50`
+- `GET /runs/enqueued?take=50`
+
+Enqueue endpoints in examples return `202` with `{ runId }`, so clients can poll `GET /runs/{id}` for completion state.
+
+Retention cleanup and schedule administration are independent:
+
+- retention only prunes terminal run history
+- recurring schedule definitions are not removed by retention

@@ -35,6 +35,37 @@ public interface IDurableJobStore
 
     Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
+        int take,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
+        bool includeDisabled,
+        CancellationToken cancellationToken);
+
+    Task<bool> SetRecurringJobEnabledAsync(
+        string jobName,
+        bool enabled,
+        DateTimeOffset? nextRunAtUtc,
+        CancellationToken cancellationToken);
+
+    Task<bool> UpdateRecurringJobScheduleAsync(
+        string jobName,
+        string cronExpression,
+        string timeZone,
+        DateTimeOffset nextRunAtUtc,
+        CancellationToken cancellationToken);
+
+    Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken);
+
     Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,

@@ -42,4 +42,27 @@ public sealed class DurableStackSqliteRegistrationTests
         Assert.Equal(DurableStackStorageProvider.Sqlite, options.StorageProvider);
         Assert.False(string.IsNullOrWhiteSpace(options.Sqlite.ConnectionString));
     }
+
+    [Fact]
+    public void AddDurableStackSqlite_with_connection_string_name_uses_named_connection_string()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ConnectionStrings:acmewidgets_prod"] = "Data Source=durable_stack.db",
+            })
+            .Build();
+
+        services.AddDurableStackSqlite(configuration, options =>
+        {
+            options.ConnectionStringName = "acmewidgets_prod";
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal("acmewidgets_prod", options.ConnectionStringName);
+        Assert.Equal("Data Source=durable_stack.db", options.Sqlite.ConnectionString);
+    }
 }

@@ -12,7 +12,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Core</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>beta.1</VersionSuffix>
+    <VersionSuffix>beta.4</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>DurableStack core abstractions, options, and execution pipeline for durable jobs.</Description>

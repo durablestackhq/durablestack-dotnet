@@ -146,6 +146,141 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    public Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runs.Values
+                .Where(x => x.JobName.Equals(jobName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.ScheduledForUtc)
+                .Take(Math.Max(1, take))
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<JobRunRecord>>(result);
+        }
+    }
+
+    public Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runs.Values
+                .Where(x => x.ScheduleSlotUtc is null)
+                .OrderByDescending(x => x.ScheduledForUtc)
+                .Take(Math.Max(1, take))
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<JobRunRecord>>(result);
+        }
+    }
+
+    public Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
+        bool includeDisabled,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var jobs = _recurring.Values
+                .Where(x => includeDisabled || x.Enabled)
+                .OrderBy(x => x.JobName)
+                .Select(CloneRecurring)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<RecurringJobState>>(jobs);
+        }
+    }
+
+    public Task<bool> SetRecurringJobEnabledAsync(
+        string jobName,
+        bool enabled,
+        DateTimeOffset? nextRunAtUtc,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_recurring.TryGetValue(jobName, out var state))
+            {
+                return Task.FromResult(false);
+            }
+
+            var next = nextRunAtUtc ?? state.NextRunAtUtc;
+            _recurring[jobName] = new RecurringJobState
+            {
+                JobName = state.JobName,
+                JobType = state.JobType,
+                CronExpression = state.CronExpression,
+                TimeZone = state.TimeZone,
+                MaxAttempts = state.MaxAttempts,
+                Enabled = enabled,
+                NextRunAtUtc = next,
+            };
+
+            return Task.FromResult(true);
+        }
+    }
+
+    public Task<bool> UpdateRecurringJobScheduleAsync(
+        string jobName,
+        string cronExpression,
+        string timeZone,
+        DateTimeOffset nextRunAtUtc,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_recurring.TryGetValue(jobName, out var state))
+            {
+                return Task.FromResult(false);
+            }
+
+            _recurring[jobName] = new RecurringJobState
+            {
+                JobName = state.JobName,
+                JobType = state.JobType,
+                CronExpression = cronExpression,
+                TimeZone = timeZone,
+                MaxAttempts = state.MaxAttempts,
+                Enabled = state.Enabled,
+                NextRunAtUtc = nextRunAtUtc,
+            };
+
+            return Task.FromResult(true);
+        }
+    }
+
+    public Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var toDelete = _runs.Values
+                .Where(run =>
+                    (run.Status == "succeeded" || run.Status == "failed")
+                    && run.CompletedAtUtc.HasValue
+                    && run.CompletedAtUtc.Value < completedBeforeUtc)
+                .OrderBy(run => run.CompletedAtUtc)
+                .Take(Math.Max(1, batchSize))
+                .Select(run => run.Id)
+                .ToList();
+
+            foreach (var runId in toDelete)
+            {
+                _runs.Remove(runId);
+            }
+
+            return Task.FromResult(toDelete.Count);
+        }
+    }
+
     public Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -161,8 +296,11 @@ public sealed class InMemoryJobStore : IDurableJobStore
             _recurring[registration.JobName] = new RecurringJobState
             {
                 JobName = registration.JobName,
+                JobType = registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
                 CronExpression = registration.CronExpression,
                 TimeZone = registration.TimeZone,
+                MaxAttempts = registration.MaxAttempts,
+                Enabled = true,
                 NextRunAtUtc = nextRunAtUtc,
             };
         }
@@ -179,15 +317,10 @@ public sealed class InMemoryJobStore : IDurableJobStore
         {
             var due = _recurring.Values
                 .Where(x => x.NextRunAtUtc <= nowUtc)
+                .Where(x => x.Enabled)
                 .OrderBy(x => x.NextRunAtUtc)
                 .Take(batchSize)
-                .Select(x => new RecurringJobState
-                {
-                    JobName = x.JobName,
-                    CronExpression = x.CronExpression,
-                    TimeZone = x.TimeZone,
-                    NextRunAtUtc = x.NextRunAtUtc,
-                })
+                .Select(CloneRecurring)
                 .ToList();
 
             return Task.FromResult<IReadOnlyList<RecurringJobState>>(due);
@@ -235,6 +368,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 JobType = registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
                 Status = "pending",
                 ScheduledForUtc = recurring.NextRunAtUtc,
+                ScheduleSlotUtc = recurring.NextRunAtUtc,
                 Attempt = 0,
                 MaxAttempts = registration.MaxAttempts,
                 PayloadJson = null,
@@ -274,6 +408,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
             JobType = source.JobType,
             Status = source.Status,
             ScheduledForUtc = source.ScheduledForUtc,
+            ScheduleSlotUtc = source.ScheduleSlotUtc,
             StartedAtUtc = source.StartedAtUtc,
             CompletedAtUtc = source.CompletedAtUtc,
             Attempt = source.Attempt,
@@ -282,6 +417,20 @@ public sealed class InMemoryJobStore : IDurableJobStore
             LeaseUntilUtc = source.LeaseUntilUtc,
             PayloadJson = source.PayloadJson,
             ErrorMessage = source.ErrorMessage,
+        };
+    }
+
+    private static RecurringJobState CloneRecurring(RecurringJobState source)
+    {
+        return new RecurringJobState
+        {
+            JobName = source.JobName,
+            JobType = source.JobType,
+            CronExpression = source.CronExpression,
+            TimeZone = source.TimeZone,
+            MaxAttempts = source.MaxAttempts,
+            Enabled = source.Enabled,
+            NextRunAtUtc = source.NextRunAtUtc,
         };
     }
 }

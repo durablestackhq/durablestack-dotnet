@@ -19,6 +19,8 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
     private readonly DurableStackOptions _options;
     private readonly IReadOnlyList<IDurableStackEventSink> _eventSinks;
     private readonly DurableStackEventFactory _eventFactory;
+    private readonly object _retentionGate = new();
+    private DateTimeOffset _nextRetentionSweepAtUtc = DateTimeOffset.MinValue;
 
     public DurableStackProcessor(
         IDurableJobStore store,
@@ -39,6 +41,8 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
     public async Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
     {
         DurableStackTelemetry.WorkerPolls.Add(1);
+
+        await PruneHistoricalRunsIfDueAsync(cancellationToken);
 
         var materialized = await _recurringScheduler.MaterializeDueRunsAsync(cancellationToken);
         if (materialized > 0)
@@ -67,6 +71,38 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
         }
 
         return claimed.Count;
+    }
+
+    private async Task PruneHistoricalRunsIfDueAsync(CancellationToken cancellationToken)
+    {
+        if (!_options.Retention.Enabled)
+        {
+            return;
+        }
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var shouldSweep = false;
+        var sweepInterval = _options.Retention.GetEffectiveSweepInterval();
+
+        lock (_retentionGate)
+        {
+            if (nowUtc >= _nextRetentionSweepAtUtc)
+            {
+                _nextRetentionSweepAtUtc = nowUtc.Add(sweepInterval);
+                shouldSweep = true;
+            }
+        }
+
+        if (!shouldSweep)
+        {
+            return;
+        }
+
+        var retentionWindow = _options.Retention.GetEffectiveRunRetention(_options.StorageProvider);
+        var completedBeforeUtc = nowUtc.Subtract(retentionWindow);
+        var batchSize = _options.Retention.GetEffectiveDeleteBatchSize();
+
+        await _store.PruneHistoricalRunsAsync(completedBeforeUtc, batchSize, cancellationToken);
     }
 
     private async Task ExecuteRunAsync(JobRunRecord run, CancellationToken cancellationToken)

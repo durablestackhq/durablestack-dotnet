@@ -26,10 +26,11 @@ public sealed class DurableStackClientTests
 
         var client = new DefaultDurableStackClient(store, registry);
 
-        await client.EnqueueAsync<TestArgsJob>(new TestArgs { Value = "hello" }, CancellationToken.None);
+        var runId = await client.EnqueueAsync<TestArgsJob>(new TestArgs { Value = "hello" }, CancellationToken.None);
 
         var runs = await store.GetRunsAsync(CancellationToken.None);
         var run = Assert.Single(runs);
+        Assert.Equal(run.Id, runId);
         Assert.Equal("send-email", run.JobName);
         Assert.Equal("pending", run.Status);
         Assert.Equal(5, run.MaxAttempts);
@@ -53,9 +54,10 @@ public sealed class DurableStackClientTests
         var client = new DefaultDurableStackClient(store, registry);
         var scheduledFor = DateTimeOffset.UtcNow.AddMinutes(10);
 
-        await client.ScheduleAsync<TestNoArgsJob>(payload: null, runAtUtc: scheduledFor, cancellationToken: CancellationToken.None);
+        var runId = await client.ScheduleAsync<TestNoArgsJob>(payload: null, runAtUtc: scheduledFor, cancellationToken: CancellationToken.None);
 
         var run = (await store.GetRunsAsync(CancellationToken.None)).Single();
+        Assert.Equal(run.Id, runId);
         Assert.Equal(scheduledFor, run.ScheduledForUtc);
     }
 }

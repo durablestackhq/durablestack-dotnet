@@ -43,4 +43,17 @@ public sealed class DurableJobRunQueryService : IDurableJobRunQueryService
             .Take(Math.Max(1, take))
             .ToList();
     }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take = 100,
+        CancellationToken cancellationToken = default)
+    {
+        return await _store.GetRunsByJobNameAsync(jobName, Math.Max(1, take), cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(int take = 100, CancellationToken cancellationToken = default)
+    {
+        return await _store.GetEnqueuedRunsAsync(Math.Max(1, take), cancellationToken);
+    }
 }

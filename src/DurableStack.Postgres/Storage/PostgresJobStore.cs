@@ -246,6 +246,7 @@ public sealed class PostgresJobStore : IDurableJobStore
                 status,
                 payload_json,
                 scheduled_for_utc,
+                schedule_slot_utc,
                 started_at_utc,
                 completed_at_utc,
                 attempt,
@@ -282,6 +283,7 @@ public sealed class PostgresJobStore : IDurableJobStore
                 status,
                 payload_json,
                 scheduled_for_utc,
+                schedule_slot_utc,
                 started_at_utc,
                 completed_at_utc,
                 attempt,
@@ -306,6 +308,222 @@ public sealed class PostgresJobStore : IDurableJobStore
         }
 
         return runs;
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
+        string jobName,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where job_name = @job_name
+            order by scheduled_for_utc desc
+            limit @take;
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("job_name", jobName);
+        command.Parameters.AddWithValue("take", Math.Max(1, take));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where schedule_slot_utc is null
+            order by scheduled_for_utc desc
+            limit @take;
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("take", Math.Max(1, take));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
+    public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
+        bool includeDisabled,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                name,
+                job_type,
+                cron_expression,
+                time_zone,
+                max_attempts,
+                enabled,
+                next_run_at_utc
+            from {_jobsTable}
+            where schedule_type = 'cron'
+              and cron_expression is not null
+              and (@include_disabled or enabled = true)
+            order by name asc;
+            """;
+
+        var jobs = new List<RecurringJobState>();
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("include_disabled", includeDisabled);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            jobs.Add(new RecurringJobState
+            {
+                JobName = reader.GetString(reader.GetOrdinal("name")),
+                JobType = reader.GetString(reader.GetOrdinal("job_type")),
+                CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
+                TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
+                MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                NextRunAtUtc = AsOptionalUtcDateTimeOffset(reader, "next_run_at_utc") ?? DateTimeOffset.MinValue,
+            });
+        }
+
+        return jobs;
+    }
+
+    public async Task<bool> SetRecurringJobEnabledAsync(
+        string jobName,
+        bool enabled,
+        DateTimeOffset? nextRunAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_jobsTable}
+            set
+                enabled = @enabled,
+                next_run_at_utc = @next_run_at_utc,
+                updated_at_utc = now()
+            where name = @name
+              and schedule_type = 'cron';
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("enabled", enabled);
+        command.Parameters.AddWithValue("next_run_at_utc", (object?)nextRunAtUtc?.UtcDateTime ?? DBNull.Value);
+        command.Parameters.AddWithValue("name", jobName);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    public async Task<bool> UpdateRecurringJobScheduleAsync(
+        string jobName,
+        string cronExpression,
+        string timeZone,
+        DateTimeOffset nextRunAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_jobsTable}
+            set
+                cron_expression = @cron_expression,
+                time_zone = @time_zone,
+                next_run_at_utc = @next_run_at_utc,
+                updated_at_utc = now()
+            where name = @name
+              and schedule_type = 'cron';
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("cron_expression", cronExpression);
+        command.Parameters.AddWithValue("time_zone", timeZone);
+        command.Parameters.AddWithValue("next_run_at_utc", nextRunAtUtc.UtcDateTime);
+        command.Parameters.AddWithValue("name", jobName);
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
+    public async Task<int> PruneHistoricalRunsAsync(
+        DateTimeOffset completedBeforeUtc,
+        int batchSize,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            with to_delete as (
+                select id
+                from {_runsTable}
+                where status in ('succeeded', 'failed')
+                  and completed_at_utc is not null
+                  and completed_at_utc < @completed_before_utc
+                order by completed_at_utc asc
+                limit @batch_size
+            )
+            delete from {_runsTable} as r
+            using to_delete
+            where r.id = to_delete.id;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("completed_before_utc", completedBeforeUtc.UtcDateTime);
+        command.Parameters.AddWithValue("batch_size", Math.Max(1, batchSize));
+
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task UpsertRecurringJobAsync(
@@ -352,6 +570,7 @@ public sealed class PostgresJobStore : IDurableJobStore
                 time_zone = excluded.time_zone,
                 enabled = true,
                 max_attempts = excluded.max_attempts,
+                next_run_at_utc = excluded.next_run_at_utc,
                 updated_at_utc = now();
             """;
 
@@ -375,8 +594,11 @@ public sealed class PostgresJobStore : IDurableJobStore
         var sql = $"""
             select
                 name,
+                job_type,
                 cron_expression,
                 time_zone,
+                max_attempts,
+                enabled,
                 next_run_at_utc
             from {_jobsTable}
             where enabled = true
@@ -401,8 +623,11 @@ public sealed class PostgresJobStore : IDurableJobStore
             jobs.Add(new RecurringJobState
             {
                 JobName = reader.GetString(reader.GetOrdinal("name")),
+                JobType = reader.GetString(reader.GetOrdinal("job_type")),
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
+                MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
                 NextRunAtUtc = AsUtcDateTimeOffset(reader, "next_run_at_utc"),
             });
         }
@@ -549,6 +774,7 @@ public sealed class PostgresJobStore : IDurableJobStore
                 ? null
                 : reader.GetString(reader.GetOrdinal("payload_json")),
             ScheduledForUtc = AsUtcDateTimeOffset(reader, "scheduled_for_utc"),
+            ScheduleSlotUtc = AsOptionalUtcDateTimeOffset(reader, "schedule_slot_utc"),
             StartedAtUtc = reader.IsDBNull(reader.GetOrdinal("started_at_utc"))
                 ? null
                 : AsUtcDateTimeOffset(reader, "started_at_utc"),
@@ -573,6 +799,31 @@ public sealed class PostgresJobStore : IDurableJobStore
     {
         var value = reader.GetDateTime(reader.GetOrdinal(column));
         return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    }
+
+    private static DateTimeOffset? AsOptionalUtcDateTimeOffset(NpgsqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetDateTime(ordinal);
+        return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
+    }
+
+    private static int TryGetOrdinal(NpgsqlDataReader reader, string column)
+    {
+        for (var i = 0; i < reader.FieldCount; i++)
+        {
+            if (string.Equals(reader.GetName(i), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
@@ -628,6 +879,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists ix_{_runsTable}_due on {_runsTable} (status, scheduled_for_utc);");
         sb.AppendLine($"create index if not exists ix_{_runsTable}_lease on {_runsTable} (lease_until_utc);");
         sb.AppendLine($"create index if not exists ix_{_runsTable}_job_name on {_runsTable} (job_name);");
+        sb.AppendLine($"create index if not exists ix_{_runsTable}_completed on {_runsTable} (status, completed_at_utc);");
         sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc timestamptz null;");
         sb.AppendLine($"create unique index if not exists ix_{_runsTable}_recurring_slot_unique on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
 

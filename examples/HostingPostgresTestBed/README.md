@@ -34,18 +34,23 @@ It is intended for API/App integration testing where you want predictable job ou
 
 - `POST /enqueue?email=<address>`
   - Enqueues `send-welcome-email`.
+  - Returns `202` with `{ runId }`.
 
 - `POST /enqueue-long-running`
   - Enqueues `long-running-lease-demo`.
+  - Returns `202` with `{ runId }`.
 
 - `POST /enqueue-fail-always`
   - Enqueues `flaky-failure-demo` with `FailUntilAttempt=10` (expected terminal failure with current retry policy).
+  - Returns `202` with `{ runId }`.
 
 - `POST /enqueue-fail-once`
   - Enqueues `flaky-failure-demo` with `FailUntilAttempt=1` (fails first attempt, then succeeds).
+  - Returns `202` with `{ runId }`.
 
 - `POST /enqueue-fail-twice`
   - Enqueues `flaky-failure-demo` with `FailUntilAttempt=2` (fails twice, then succeeds).
+  - Returns `202` with `{ runId }`.
 
 - `POST /enqueue-fail-custom?failUntilAttempt=<n>&maxAttempts=<n>&scenarioName=<name>`
   - Enqueues `flaky-failure-demo` with custom failure pattern.
@@ -53,9 +58,16 @@ It is intended for API/App integration testing where you want predictable job ou
   - `maxAttempts` default: registration default (`5`), allowed range: `1..25`.
   - `scenarioName` optional; if omitted, a descriptive name is generated.
   - This endpoint overrides `maxAttempts` per run by enqueueing through `IDurableJobStore`.
+  - Returns `202` with `{ runId }`.
 
 - `GET /runs`
   - Returns up to 50 recent runs.
+
+- `GET /runs/job/{jobName}?take=<n>`
+  - Returns run history for a specific job name.
+
+- `GET /runs/enqueued?take=<n>`
+  - Returns only enqueue-driven runs (excludes recurring-materialized runs).
 
 - `GET /runs/{id}`
   - Returns details for a specific run id.
@@ -63,6 +75,28 @@ It is intended for API/App integration testing where you want predictable job ou
 - `GET /runs/status/{status}?take=<n>`
   - Returns runs by status (`pending`, `leased`, `succeeded`, `failed`).
   - `take` default: `50`, range: `1..500`.
+
+- `GET /schedules`
+  - Lists recurring schedules (enabled and disabled).
+  - Response shape: `{ count, items }`.
+
+- `POST /schedules/{jobName}/disable`
+  - Disables a recurring schedule.
+  - Returns `404` when schedule name is unknown.
+
+- `POST /schedules/{jobName}/enable`
+  - Re-enables a recurring schedule.
+  - Returns `404` when schedule name is unknown.
+
+- `POST /schedules/{jobName}/run-now`
+  - Enqueues the recurring job immediately as an ad-hoc run.
+  - Returns `202` with `{ runId }`.
+  - Returns `404` when schedule name is unknown.
+
+- `PUT /schedules/{jobName}/cron?cron=<expr>&timeZone=<iana>`
+  - Updates cron expression/time zone for a recurring schedule.
+  - `timeZone` defaults to `UTC` when omitted.
+  - Returns `400` for invalid cron/time zone values.
 
 ## Notes
 
