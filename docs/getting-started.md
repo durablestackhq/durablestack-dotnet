@@ -289,6 +289,8 @@ Run query endpoints in example APIs:
 - `GET /runs/job/{jobName}?take=50`
 - `GET /runs/enqueued?take=50`
 
+Enqueue endpoints in examples return `202` with `{ runId }`, so clients can poll `GET /runs/{id}` for completion state.
+
 Retention cleanup and schedule administration are independent:
 
 - retention only prunes terminal run history

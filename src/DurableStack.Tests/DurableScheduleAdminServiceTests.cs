@@ -48,11 +48,12 @@ public sealed class DurableScheduleAdminServiceTests
         Assert.True(enabledSchedule.Enabled);
         Assert.True(enabledSchedule.NextRunAtUtc > DateTimeOffset.UtcNow);
 
-        var queued = await admin.RunScheduledJobNowAsync("heartbeat");
-        Assert.True(queued);
+        var runId = await admin.RunScheduledJobNowAsync("heartbeat");
+        Assert.NotNull(runId);
 
         var runs = await store.GetRunsAsync(CancellationToken.None);
         Assert.Single(runs);
+        Assert.Equal(runId, runs[0].Id);
         Assert.Null(runs[0].ScheduleSlotUtc);
     }
 
@@ -103,12 +104,24 @@ public sealed class DurableScheduleAdminServiceTests
         IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
         var before = Assert.Single(await admin.ListScheduledJobsAsync());
 
-        var queued = await admin.RunScheduledJobNowAsync("heartbeat");
-        Assert.True(queued);
+        var runId = await admin.RunScheduledJobNowAsync("heartbeat");
+        Assert.NotNull(runId);
 
         var after = Assert.Single(await admin.ListScheduledJobsAsync());
         Assert.Equal(before.CronExpression, after.CronExpression);
         Assert.Equal(before.TimeZone, after.TimeZone);
         Assert.Equal(before.Enabled, after.Enabled);
+    }
+
+    [Fact]
+    public async Task RunScheduledJobNowAsync_returns_null_for_unknown_job()
+    {
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(Array.Empty<DurableJobRegistration>());
+
+        IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
+        var runId = await admin.RunScheduledJobNowAsync("missing-job");
+
+        Assert.Null(runId);
     }
 }

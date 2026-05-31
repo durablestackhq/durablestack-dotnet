@@ -6,9 +6,9 @@ namespace DurableStack.Core.Abstractions;
 
 public interface IDurableStackClient
 {
-    Task EnqueueAsync<TJob>(object? payload = null, CancellationToken cancellationToken = default);
+    Task<Guid> EnqueueAsync<TJob>(object? payload = null, CancellationToken cancellationToken = default);
 
-    Task ScheduleAsync<TJob>(
+    Task<Guid> ScheduleAsync<TJob>(
         object? payload,
         DateTimeOffset runAtUtc,
         CancellationToken cancellationToken = default);
