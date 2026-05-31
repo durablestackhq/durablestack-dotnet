@@ -26,8 +26,10 @@ app.MapPost("/schedules/{jobName}/disable", async (string jobName, IDurableSched
 
 app.MapPost("/schedules/{jobName}/run-now", async (string jobName, IDurableScheduleAdminService schedules, CancellationToken ct) =>
 {
-    var queued = await schedules.RunScheduledJobNowAsync(jobName, ct);
-    return queued ? Results.Accepted() : Results.NotFound();
+    var runId = await schedules.RunScheduledJobNowAsync(jobName, ct);
+    return runId.HasValue
+        ? Results.Accepted($"/runs/{runId}", new { jobName, runId })
+        : Results.NotFound();
 });
 ```
 
@@ -49,6 +51,7 @@ app.MapPost("/schedules/{jobName}/run-now", async (string jobName, IDurableSched
   - recomputes `nextRunAtUtc` from current time
 - `POST /schedules/{jobName}/run-now`
   - enqueues an ad-hoc run (does not mutate cron schedule)
+  - returns `202` with `runId`
 - `PUT /schedules/{jobName}/cron?cron=<expr>&timeZone=<iana>`
   - validates cron/time zone
   - returns `400` when invalid

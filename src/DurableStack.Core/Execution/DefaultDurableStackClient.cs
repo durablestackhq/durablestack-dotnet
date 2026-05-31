@@ -17,14 +17,14 @@ public sealed class DefaultDurableStackClient : IDurableStackClient
         _registry = registry;
     }
 
-    public async Task EnqueueAsync<TJob>(object? payload = null, CancellationToken cancellationToken = default)
+    public async Task<Guid> EnqueueAsync<TJob>(object? payload = null, CancellationToken cancellationToken = default)
     {
         var registration = _registry.FindByJobType(typeof(TJob))
             ?? throw new InvalidOperationException($"No registration exists for job type '{typeof(TJob).FullName}'.");
 
         var payloadJson = SerializePayload(payload);
 
-        await _store.EnqueueAsync(
+        return await _store.EnqueueAsync(
             registration.JobName,
             registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
             payloadJson,
@@ -33,7 +33,7 @@ public sealed class DefaultDurableStackClient : IDurableStackClient
             cancellationToken);
     }
 
-    public async Task ScheduleAsync<TJob>(
+    public async Task<Guid> ScheduleAsync<TJob>(
         object? payload,
         DateTimeOffset runAtUtc,
         CancellationToken cancellationToken = default)
@@ -43,7 +43,7 @@ public sealed class DefaultDurableStackClient : IDurableStackClient
 
         var payloadJson = SerializePayload(payload);
 
-        await _store.EnqueueAsync(
+        return await _store.EnqueueAsync(
             registration.JobName,
             registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
             payloadJson,

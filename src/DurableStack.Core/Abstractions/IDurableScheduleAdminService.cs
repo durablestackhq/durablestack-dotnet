@@ -13,5 +13,5 @@ public interface IDurableScheduleAdminService
 
     Task<bool> UpdateScheduledJobCronAsync(string jobName, string cronExpression, string timeZone = "UTC", CancellationToken cancellationToken = default);
 
-    Task<bool> RunScheduledJobNowAsync(string jobName, CancellationToken cancellationToken = default);
+    Task<Guid?> RunScheduledJobNowAsync(string jobName, CancellationToken cancellationToken = default);
 }

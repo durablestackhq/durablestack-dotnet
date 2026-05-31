@@ -45,8 +45,8 @@ app.MapPost("/enqueue", async (IDurableStackClient jobs, string email, Cancellat
         Email = email,
     };
 
-    await jobs.EnqueueAsync<SendWelcomeEmailJob>(args, cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<SendWelcomeEmailJob>(args, cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.MapGet("/runs", async (IDurableJobRunQueryService query, CancellationToken cancellationToken) =>
@@ -106,8 +106,8 @@ app.MapGet("/runs/status/{status}", async (
 
 app.MapPost("/enqueue-long-running", async (IDurableStackClient jobs, CancellationToken cancellationToken) =>
 {
-    await jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.MapGet("/schedules", async (IDurableScheduleAdminService schedules, CancellationToken cancellationToken) =>
@@ -169,9 +169,9 @@ app.MapPost("/schedules/{jobName}/run-now", async (
         return Results.BadRequest(new { error = "jobName is required." });
     }
 
-    var queued = await schedules.RunScheduledJobNowAsync(jobName, cancellationToken);
-    return queued
-        ? Results.Accepted($"/runs/job/{jobName}", new { jobName, action = "queued-now" })
+    var runId = await schedules.RunScheduledJobNowAsync(jobName, cancellationToken);
+    return runId.HasValue
+        ? Results.Accepted($"/runs/{runId}", new { jobName, runId, action = "queued-now" })
         : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
 });
 
@@ -225,8 +225,8 @@ app.MapPost("/enqueue-fail-always", async (IDurableStackClient jobs, Cancellatio
         FailUntilAttempt = 10,
     };
 
-    await jobs.EnqueueAsync<FlakyFailureDemoJob>(args, cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<FlakyFailureDemoJob>(args, cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.MapPost("/enqueue-fail-once", async (IDurableStackClient jobs, CancellationToken cancellationToken) =>
@@ -237,8 +237,8 @@ app.MapPost("/enqueue-fail-once", async (IDurableStackClient jobs, CancellationT
         FailUntilAttempt = 1,
     };
 
-    await jobs.EnqueueAsync<FlakyFailureDemoJob>(args, cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<FlakyFailureDemoJob>(args, cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.MapPost("/enqueue-fail-twice", async (IDurableStackClient jobs, CancellationToken cancellationToken) =>
@@ -249,8 +249,8 @@ app.MapPost("/enqueue-fail-twice", async (IDurableStackClient jobs, Cancellation
         FailUntilAttempt = 2,
     };
 
-    await jobs.EnqueueAsync<FlakyFailureDemoJob>(args, cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<FlakyFailureDemoJob>(args, cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.MapPost("/enqueue-fail-custom", async (

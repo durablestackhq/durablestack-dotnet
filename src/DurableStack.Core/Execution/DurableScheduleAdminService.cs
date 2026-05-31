@@ -49,15 +49,15 @@ public sealed class DurableScheduleAdminService : IDurableScheduleAdminService
             cancellationToken);
     }
 
-    public async Task<bool> RunScheduledJobNowAsync(string jobName, CancellationToken cancellationToken = default)
+    public async Task<Guid?> RunScheduledJobNowAsync(string jobName, CancellationToken cancellationToken = default)
     {
         var registration = _registry.FindByName(jobName);
         if (registration is null || !registration.IsRecurring)
         {
-            return false;
+            return null;
         }
 
-        await _store.EnqueueAsync(
+        var runId = await _store.EnqueueAsync(
             registration.JobName,
             registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
             payloadJson: null,
@@ -65,7 +65,7 @@ public sealed class DurableScheduleAdminService : IDurableScheduleAdminService
             registration.MaxAttempts,
             cancellationToken);
 
-        return true;
+        return runId;
     }
 
     private async Task<DateTimeOffset?> ResolveNextRunUtcAsync(string jobName, CancellationToken cancellationToken)

@@ -30,8 +30,8 @@ app.MapPost("/enqueue", async (IDurableStackClient jobs, string email, Cancellat
         Email = email,
     };
 
-    await jobs.EnqueueAsync<SendWelcomeEmailJob>(args, cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<SendWelcomeEmailJob>(args, cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.MapGet("/runs", async (IDurableJobRunQueryService query, CancellationToken cancellationToken) =>
@@ -70,8 +70,8 @@ app.MapGet("/runs/status/{status}", async (
 
 app.MapPost("/enqueue-long-running", async (IDurableStackClient jobs, CancellationToken cancellationToken) =>
 {
-    await jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: cancellationToken);
-    return Results.Accepted();
+    var runId = await jobs.EnqueueAsync<LongRunningLeaseDemoJob>(cancellationToken: cancellationToken);
+    return Results.Accepted($"/runs/{runId}", new { runId });
 });
 
 app.Run();
