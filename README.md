@@ -61,6 +61,10 @@ Published package IDs:
 
 ## Docs
 
+- Live docs: https://docs.durablestack.com/docs/latest/dotnet
+- Quickstart: https://docs.durablestack.com/docs/latest/dotnet/quickstart
+- Getting started: https://docs.durablestack.com/docs/latest/dotnet/getting-started
+- Providers: https://docs.durablestack.com/docs/latest/dotnet/providers
 - `docs/getting-started.md`
 - `docs/providers.md`
 - `docs/postgres.md`
