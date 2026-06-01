@@ -19,12 +19,13 @@
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Hosting</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>beta.4</VersionSuffix>
+    <VersionSuffix>beta.5</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>Generic hosting and dependency injection integration for DurableStack.</Description>
     <PackageTags>durable jobs;scheduler;background jobs;hosting;dotnet</PackageTags>
     <RepositoryUrl>https://github.com/durablestackhq/durablestack-dotnet</RepositoryUrl>
+    <PackageProjectUrl>https://docs.durablestack.com/docs/latest/dotnet</PackageProjectUrl>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
