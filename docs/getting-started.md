@@ -149,6 +149,26 @@ Optional worker tuning can be set in configuration:
 
 If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=50`, `LeaseDuration=30s`.
 
+Job activation mode defaults to scoped-per-execution, so each run executes in a fresh DI scope.
+
+```json
+{
+  "DurableStack": {
+    "JobActivation": "ScopedPerExecution"
+  }
+}
+```
+
+Optional compatibility mode:
+
+```json
+{
+  "DurableStack": {
+    "JobActivation": "RootProvider"
+  }
+}
+```
+
 ## Data retention
 
 DurableStack can automatically prune old terminal runs (`succeeded` and `failed`) to prevent unbounded growth.

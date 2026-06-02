@@ -8,6 +8,7 @@ using DurableStack.Core.Events;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
 using DurableStack.Tests.TestSupport;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace DurableStack.Tests;
 
@@ -29,8 +30,6 @@ public sealed class DurableStackProcessorTests
             },
         });
 
-        var provider = new InlineServiceProvider(new TestNoArgsJob());
-        var runner = new DefaultDurableJobRunner(provider, registry);
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
@@ -38,6 +37,8 @@ public sealed class DurableStackProcessorTests
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
+        using var provider = BuildServiceProvider(new TestNoArgsJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
         var events = new RecordingEventSink();
         var eventFactory = BuildEventFactory(options);
         var scheduler = new NoOpRecurringJobScheduler();
@@ -83,8 +84,6 @@ public sealed class DurableStackProcessorTests
             },
         });
 
-        var provider = new InlineServiceProvider(new AlwaysFailJob());
-        var runner = new DefaultDurableJobRunner(provider, registry);
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
@@ -92,6 +91,8 @@ public sealed class DurableStackProcessorTests
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromSeconds(30),
         };
+        using var provider = BuildServiceProvider(new AlwaysFailJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
         var events = new RecordingEventSink();
         var eventFactory = BuildEventFactory(options);
         var scheduler = new NoOpRecurringJobScheduler();
@@ -134,8 +135,6 @@ public sealed class DurableStackProcessorTests
             },
         });
 
-        var provider = new InlineServiceProvider(new AlwaysFailJob());
-        var runner = new DefaultDurableJobRunner(provider, registry);
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
@@ -143,6 +142,8 @@ public sealed class DurableStackProcessorTests
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromSeconds(30),
         };
+        using var provider = BuildServiceProvider(new AlwaysFailJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
         var events = new RecordingEventSink();
         var eventFactory = BuildEventFactory(options);
         var scheduler = new NoOpRecurringJobScheduler();
@@ -181,8 +182,6 @@ public sealed class DurableStackProcessorTests
             },
         });
 
-        var provider = new InlineServiceProvider(new TestNoArgsJob());
-        var runner = new DefaultDurableJobRunner(provider, registry);
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
@@ -190,6 +189,8 @@ public sealed class DurableStackProcessorTests
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
+        using var provider = BuildServiceProvider(new TestNoArgsJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
         var events = new RecordingEventSink();
         var eventFactory = BuildEventFactory(options);
         var scheduler = new NoOpRecurringJobScheduler();
@@ -234,8 +235,8 @@ public sealed class DurableStackProcessorTests
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
 
-        var provider = new InlineServiceProvider(new LongRunningNoArgsJob(TimeSpan.FromMilliseconds(900)));
-        var baseRunner = new DefaultDurableJobRunner(provider, registry);
+        using var provider = BuildServiceProvider(new LongRunningNoArgsJob(TimeSpan.FromMilliseconds(900)));
+        var baseRunner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
         var runner = new LeaseHeartbeatJobRunner(baseRunner, store, options);
         var events = new RecordingEventSink();
         var eventFactory = BuildEventFactory(options);
@@ -280,8 +281,6 @@ public sealed class DurableStackProcessorTests
         });
 
         var job = new AtomicCounterJob();
-        var provider = new InlineServiceProvider(job);
-        var baseRunner = new DefaultDurableJobRunner(provider, registry);
         var optionsA = new DurableStackOptions
         {
             WorkerName = "worker-a",
@@ -296,6 +295,9 @@ public sealed class DurableStackProcessorTests
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
+
+        using var provider = BuildServiceProvider(job);
+        var baseRunner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, optionsA);
 
         var runnerA = new LeaseHeartbeatJobRunner(baseRunner, store, optionsA);
         var runnerB = new LeaseHeartbeatJobRunner(baseRunner, store, optionsB);
@@ -327,6 +329,17 @@ public sealed class DurableStackProcessorTests
         options.Eventing.Environment = "test";
         options.Eventing.ServiceName = "durable-stack-tests";
         return new DurableStackEventFactory(options);
+    }
+
+    private static ServiceProvider BuildServiceProvider(params object[] jobs)
+    {
+        var services = new ServiceCollection();
+        foreach (var job in jobs)
+        {
+            services.AddSingleton(job.GetType(), job);
+        }
+
+        return services.BuildServiceProvider();
     }
 
     private sealed class RecordingEventSink : IDurableStackEventSink
