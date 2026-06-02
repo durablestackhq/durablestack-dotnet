@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <PackageReference Include="Cronos" Version="0.11.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
     <PackageReference Include="TimeZoneConverter" Version="7.2.0" />
   </ItemGroup>
 
@@ -12,7 +13,7 @@
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Core</PackageId>
     <VersionPrefix>0.1.0</VersionPrefix>
-    <VersionSuffix>beta.5</VersionSuffix>
+    <VersionSuffix>beta.6</VersionSuffix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>DurableStack core abstractions, options, and execution pipeline for durable jobs.</Description>

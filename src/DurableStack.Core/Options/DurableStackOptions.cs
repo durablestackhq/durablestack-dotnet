@@ -25,6 +25,8 @@ public sealed class DurableStackOptions
 
     public DurableStackJobRegistrationOptions JobRegistration { get; } = new();
 
+    public DurableStackJobActivationMode JobActivation { get; set; } = DurableStackJobActivationMode.ScopedPerExecution;
+
     public string WorkerName { get; set; } = Environment.MachineName;
 
     public string ConnectionStringName { get; set; } = "DurableStack";
