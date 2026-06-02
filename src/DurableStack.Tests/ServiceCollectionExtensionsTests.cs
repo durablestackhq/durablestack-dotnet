@@ -234,6 +234,18 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_defaults_job_activation_to_scoped_per_execution()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(DurableStackJobActivationMode.ScopedPerExecution, options.JobActivation);
+    }
+
+    [Fact]
     public void AddDurableStack_uses_provider_aware_retention_defaults()
     {
         var inMemoryServices = new ServiceCollection();

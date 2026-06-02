@@ -24,4 +24,5 @@ Provider packages: `DurableStack.Postgres`, `DurableStack.MySql`, `DurableStack.
 ## Repository and docs
 
 - Repository: https://github.com/durablestackhq/durablestack-dotnet
-- Docs: https://github.com/durablestackhq/durablestack-dotnet/tree/main/docs
+- Docs: https://docs.durablestack.com/docs/latest/dotnet
+- Quickstart: https://docs.durablestack.com/docs/latest/dotnet/quickstart

@@ -312,6 +312,11 @@ public static class ServiceCollectionExtensions
             options.LeaseDuration = TimeSpan.FromSeconds(30);
         }
 
+        if (!Enum.IsDefined(options.JobActivation))
+        {
+            options.JobActivation = DurableStackJobActivationMode.ScopedPerExecution;
+        }
+
         options.Retention.RunRetentionSeconds = options.Retention
             .GetEffectiveRunRetention(options.StorageProvider)
             .TotalSeconds;
