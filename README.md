@@ -1,6 +1,8 @@
 # DurableStack (.NET)
 
-DurableStack is a database-backed background job runtime for .NET applications, designed from the beginning to support cloud-hosted and distributed environments.
+Run durable background jobs in .NET using the database you already have.
+
+DurableStack provides recurring scheduling, retries, distributed execution, and worker observability without requiring Redis, RabbitMQ, or additional queue infrastructure.
 
 ## Prerelease notice
 
@@ -28,6 +30,17 @@ Supported providers in this .NET implementation:
 - MySQL
 - SQL Server
 - SQLite
+
+## Feature comparison
+
+| Feature               | DurableStack | Hangfire | Quartz |
+| --------------------- | ------------ | -------- | ------ |
+| Database-backed       | Yes          | Yes      | Yes    |
+| Distributed execution | Yes          | Yes      | Yes    |
+| OpenTelemetry         | Yes          | Partial  | Varies |
+| Hosted observability  | Yes          | No       | No     |
+| Uses existing DB      | Yes          | Yes      | Yes    |
+| Multi-runtime roadmap | Yes          | No       | No     |
 
 ## Runtime roadmap
 
