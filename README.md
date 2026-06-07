@@ -1,10 +1,10 @@
 # DurableStack (.NET)
 
-DurableStack is a database-backed background job runtime for .NET applications.
+DurableStack is a database-backed background job runtime for .NET applications, designed from the beginning to support cloud-hosted and distributed environments.
 
 ## Prerelease notice
 
-This repository ships the first .NET prerelease line (`0.0.1-alpha.*`).
+This repository ships the first .NET beta line (`0.1.*`).
 
 - API may change before `1.0.0`.
 - Schema and runtime behavior may evolve during alpha.
@@ -15,6 +15,7 @@ This repository ships the first .NET prerelease line (`0.0.1-alpha.*`).
 - Recurring cron jobs with IANA timezone support.
 - Distributed-safe claiming, leasing, lease expiry reclaim, and heartbeat extension.
 - Retry and terminal failure transitions.
+- Optional, hosted observability via https://app.durablestack.com
 - Startup-safe migrations for relational providers.
 - Query APIs for recent and status-filtered runs.
 - Event sink abstraction with logging and API ingestion support.
