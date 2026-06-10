@@ -30,29 +30,17 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configuration.GetSection("DurableStack").Bind(options);
-
-        if (string.IsNullOrWhiteSpace(options.Eventing.Environment))
+        var options = CreateOptionsFromConfiguration(configuration, configure);
+        var connectionString = ResolveProviderConnectionString(null, options.Postgres.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            options.Eventing.Environment = configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"];
+            options.UsePostgres(connectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.Postgres;
         }
 
-        configure?.Invoke(options);
-
-        var connectionString = ResolveProviderConnectionString(
-            configuration,
-            options,
-            options.Postgres.ConnectionString);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                "DurableStack PostgreSQL registration requires a connection string. " +
-                $"Set DurableStack:Postgres:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
-        }
-
-        options.UsePostgres(connectionString);
         return services.AddDurableStack(options);
     }
 
@@ -61,29 +49,17 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configuration.GetSection("DurableStack").Bind(options);
-
-        if (string.IsNullOrWhiteSpace(options.Eventing.Environment))
+        var options = CreateOptionsFromConfiguration(configuration, configure);
+        var connectionString = ResolveProviderConnectionString(null, options.SqlServer.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            options.Eventing.Environment = configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"];
+            options.UseSqlServer(connectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.SqlServer;
         }
 
-        configure?.Invoke(options);
-
-        var connectionString = ResolveProviderConnectionString(
-            configuration,
-            options,
-            options.SqlServer.ConnectionString);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                "DurableStack SQL Server registration requires a connection string. " +
-                $"Set DurableStack:SqlServer:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
-        }
-
-        options.UseSqlServer(connectionString);
         return services.AddDurableStack(options);
     }
 
@@ -92,45 +68,38 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configuration.GetSection("DurableStack").Bind(options);
-
-        if (string.IsNullOrWhiteSpace(options.Eventing.Environment))
+        var options = CreateOptionsFromConfiguration(configuration, configure);
+        var connectionString = ResolveProviderConnectionString(null, options.MySql.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            options.Eventing.Environment = configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"];
+            options.UseMySql(connectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.MySql;
         }
 
-        configure?.Invoke(options);
-
-        var connectionString = ResolveProviderConnectionString(
-            configuration,
-            options,
-            options.MySql.ConnectionString);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                "DurableStack MySQL registration requires a connection string. " +
-                $"Set DurableStack:MySql:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
-        }
-
-        options.UseMySql(connectionString);
         return services.AddDurableStack(options);
     }
 
     public static IServiceCollection AddDurableStackPostgres(
         this IServiceCollection services,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
+        var options = new DurableStackOptions();
+        configure?.Invoke(options);
+
+        var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.Postgres.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
         {
-            throw new InvalidOperationException("DurableStack PostgreSQL registration requires a non-empty connection string.");
+            options.UsePostgres(effectiveConnectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.Postgres;
         }
 
-        var options = new DurableStackOptions();
-        options.UsePostgres(connectionString);
-        configure?.Invoke(options);
         return services.AddDurableStack(options);
     }
 
@@ -139,77 +108,80 @@ public static class ServiceCollectionExtensions
         IConfiguration configuration,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configuration.GetSection("DurableStack").Bind(options);
-
-        if (string.IsNullOrWhiteSpace(options.Eventing.Environment))
+        var options = CreateOptionsFromConfiguration(configuration, configure);
+        var connectionString = ResolveProviderConnectionString(null, options.Sqlite.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(connectionString))
         {
-            options.Eventing.Environment = configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"];
+            options.UseSqlite(connectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.Sqlite;
         }
 
-        configure?.Invoke(options);
-
-        var connectionString = ResolveProviderConnectionString(
-            configuration,
-            options,
-            options.Sqlite.ConnectionString);
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            throw new InvalidOperationException(
-                "DurableStack SQLite registration requires a connection string. " +
-                $"Set DurableStack:Sqlite:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
-        }
-
-        options.UseSqlite(connectionString);
         return services.AddDurableStack(options);
     }
 
     public static IServiceCollection AddDurableStackSqlServer(
         this IServiceCollection services,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
+        var options = new DurableStackOptions();
+        configure?.Invoke(options);
+
+        var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.SqlServer.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
         {
-            throw new InvalidOperationException("DurableStack SQL Server registration requires a non-empty connection string.");
+            options.UseSqlServer(effectiveConnectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.SqlServer;
         }
 
-        var options = new DurableStackOptions();
-        options.UseSqlServer(connectionString);
-        configure?.Invoke(options);
         return services.AddDurableStack(options);
     }
 
     public static IServiceCollection AddDurableStackSqlite(
         this IServiceCollection services,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
+        var options = new DurableStackOptions();
+        configure?.Invoke(options);
+
+        var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.Sqlite.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
         {
-            throw new InvalidOperationException("DurableStack SQLite registration requires a non-empty connection string.");
+            options.UseSqlite(effectiveConnectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.Sqlite;
         }
 
-        var options = new DurableStackOptions();
-        options.UseSqlite(connectionString);
-        configure?.Invoke(options);
         return services.AddDurableStack(options);
     }
 
     public static IServiceCollection AddDurableStackMySql(
         this IServiceCollection services,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        if (string.IsNullOrWhiteSpace(connectionString))
+        var options = new DurableStackOptions();
+        configure?.Invoke(options);
+
+        var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.MySql.ConnectionString);
+        if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
         {
-            throw new InvalidOperationException("DurableStack MySQL registration requires a non-empty connection string.");
+            options.UseMySql(effectiveConnectionString);
+        }
+        else
+        {
+            options.StorageProvider = DurableStackStorageProvider.MySql;
         }
 
-        var options = new DurableStackOptions();
-        options.UseMySql(connectionString);
-        configure?.Invoke(options);
         return services.AddDurableStack(options);
     }
 
@@ -217,6 +189,24 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         IConfiguration configuration,
         Action<DurableStackOptions>? configure = null)
+    {
+        var options = CreateOptionsFromConfiguration(configuration, configure);
+        return services.AddDurableStack(options);
+    }
+
+    public static IServiceCollection AddDurableStack(
+        this IServiceCollection services,
+        Action<DurableStackOptions>? configure = null)
+    {
+        var options = new DurableStackOptions();
+        configure?.Invoke(options);
+
+        return services.AddDurableStack(options);
+    }
+
+    private static DurableStackOptions CreateOptionsFromConfiguration(
+        IConfiguration configuration,
+        Action<DurableStackOptions>? configure)
     {
         var options = new DurableStackOptions();
         configuration.GetSection("DurableStack").Bind(options);
@@ -227,75 +217,17 @@ public static class ServiceCollectionExtensions
         }
 
         configure?.Invoke(options);
-
-        ApplyConnectionStringFallback(configuration, options);
-        return services.AddDurableStack(options);
+        return options;
     }
 
-    public static IServiceCollection AddDurableStack(
-        this IServiceCollection services,
-        Action<DurableStackOptions>? configure = null)
+    private static string? ResolveProviderConnectionString(string? methodConnectionString, string? optionsConnectionString)
     {
-        var options = new DurableStackOptions();
-        configure?.Invoke(options);
-
-        return services.AddDurableStack(options);
-    }
-
-    private static string? ResolveProviderConnectionString(
-        IConfiguration configuration,
-        DurableStackOptions options,
-        string? providerConnectionString)
-    {
-        if (!string.IsNullOrWhiteSpace(providerConnectionString))
+        if (!string.IsNullOrWhiteSpace(methodConnectionString))
         {
-            return providerConnectionString;
+            return methodConnectionString;
         }
 
-        var name = string.IsNullOrWhiteSpace(options.ConnectionStringName)
-            ? "DurableStack"
-            : options.ConnectionStringName;
-
-        return configuration.GetConnectionString(name);
-    }
-
-    private static void ApplyConnectionStringFallback(IConfiguration configuration, DurableStackOptions options)
-    {
-        if (options.StorageProvider == DurableStackStorageProvider.Postgres)
-        {
-            var connectionString = ResolveProviderConnectionString(configuration, options, options.Postgres.ConnectionString);
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                options.UsePostgres(connectionString);
-            }
-        }
-
-        if (options.StorageProvider == DurableStackStorageProvider.SqlServer)
-        {
-            var connectionString = ResolveProviderConnectionString(configuration, options, options.SqlServer.ConnectionString);
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                options.UseSqlServer(connectionString);
-            }
-        }
-
-        if (options.StorageProvider == DurableStackStorageProvider.Sqlite)
-        {
-            var connectionString = ResolveProviderConnectionString(configuration, options, options.Sqlite.ConnectionString);
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                options.UseSqlite(connectionString);
-            }
-        }
-
-        if (options.StorageProvider == DurableStackStorageProvider.MySql)
-        {
-            var connectionString = ResolveProviderConnectionString(configuration, options, options.MySql.ConnectionString);
-            if (!string.IsNullOrWhiteSpace(connectionString))
-            {
-                options.UseMySql(connectionString);
-            }
-        }
+        return optionsConnectionString;
     }
 
     private static IServiceCollection AddDurableStack(
@@ -310,6 +242,16 @@ public static class ServiceCollectionExtensions
         if (options.LeaseDuration <= TimeSpan.Zero)
         {
             options.LeaseDuration = TimeSpan.FromSeconds(30);
+        }
+
+        if (string.IsNullOrWhiteSpace(options.WorkerName))
+        {
+            options.WorkerName = DurableStackOptions.CreateDefaultWorkerName();
+        }
+
+        if (options.Eventing.IngestionFlushInterval <= TimeSpan.Zero)
+        {
+            options.Eventing.IngestionFlushInterval = TimeSpan.FromSeconds(5);
         }
 
         if (!Enum.IsDefined(options.JobActivation))
@@ -329,28 +271,28 @@ public static class ServiceCollectionExtensions
         {
             throw new InvalidOperationException(
                 "DurableStack is configured for PostgreSQL, but no connection string was provided. " +
-                $"Set DurableStack:Postgres:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
+                "Set DurableStack:Postgres:ConnectionString.");
         }
 
         if (options.StorageProvider == DurableStackStorageProvider.SqlServer && string.IsNullOrWhiteSpace(options.SqlServer.ConnectionString))
         {
             throw new InvalidOperationException(
                 "DurableStack is configured for SQL Server, but no connection string was provided. " +
-                $"Set DurableStack:SqlServer:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
+                "Set DurableStack:SqlServer:ConnectionString.");
         }
 
         if (options.StorageProvider == DurableStackStorageProvider.Sqlite && string.IsNullOrWhiteSpace(options.Sqlite.ConnectionString))
         {
             throw new InvalidOperationException(
                 "DurableStack is configured for SQLite, but no connection string was provided. " +
-                $"Set DurableStack:Sqlite:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
+                "Set DurableStack:Sqlite:ConnectionString.");
         }
 
         if (options.StorageProvider == DurableStackStorageProvider.MySql && string.IsNullOrWhiteSpace(options.MySql.ConnectionString))
         {
             throw new InvalidOperationException(
                 "DurableStack is configured for MySQL, but no connection string was provided. " +
-                $"Set DurableStack:MySql:ConnectionString or ConnectionStrings:{options.ConnectionStringName}.");
+                "Set DurableStack:MySql:ConnectionString.");
         }
 
         services.AddSingleton(options);

@@ -13,11 +13,12 @@ builder.Configuration
         optional: true,
         reloadOnChange: false);
 
+var connString = builder.Configuration.GetConnectionString("DurableStack");
+
 // Required: register DurableStack + hosted background processing using PostgreSQL storage.
-builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
+builder.Services.AddDurableStackPostgres(connString, options =>
 {
-    options.WorkerName = workerName;
-    options.ConnectionStringName = "DurableStack";
+    //options.WorkerName = workerName;
 });
 // Optional additional sink for local debugging:
 // builder.Services.UseDurableStackLoggingEventSink();
