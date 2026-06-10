@@ -24,13 +24,13 @@ public sealed class DurableStackSqliteRegistrationTests
     }
 
     [Fact]
-    public void AddDurableStackSqlite_with_configuration_uses_connection_strings_durable_stack()
+    public void AddDurableStackSqlite_with_configuration_uses_durable_stack_section_connection_string()
     {
         var services = new ServiceCollection();
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:DurableStack"] = "Data Source=durable_stack.db",
+                ["DurableStack:Sqlite:ConnectionString"] = "Data Source=durable_stack.db",
             })
             .Build();
 
@@ -44,25 +44,18 @@ public sealed class DurableStackSqliteRegistrationTests
     }
 
     [Fact]
-    public void AddDurableStackSqlite_with_connection_string_name_uses_named_connection_string()
+    public void AddDurableStackSqlite_with_options_connection_string_sets_provider_to_sqlite()
     {
         var services = new ServiceCollection();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:acmewidgets_prod"] = "Data Source=durable_stack.db",
-            })
-            .Build();
-
-        services.AddDurableStackSqlite(configuration, options =>
+        services.AddDurableStackSqlite(configure: options =>
         {
-            options.ConnectionStringName = "acmewidgets_prod";
+            options.Sqlite.ConnectionString = "Data Source=durable_stack.db";
         });
 
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<DurableStackOptions>();
 
-        Assert.Equal("acmewidgets_prod", options.ConnectionStringName);
         Assert.Equal("Data Source=durable_stack.db", options.Sqlite.ConnectionString);
+        Assert.Equal(DurableStackStorageProvider.Sqlite, options.StorageProvider);
     }
 }

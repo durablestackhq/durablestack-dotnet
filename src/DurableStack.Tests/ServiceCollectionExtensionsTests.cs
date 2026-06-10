@@ -216,6 +216,22 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_uses_seconds_alias_for_ingestion_flush_interval()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.Eventing.IngestionFlushIntervalSeconds = 2.5;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(TimeSpan.FromMilliseconds(2500), options.Eventing.IngestionFlushInterval);
+    }
+
+    [Fact]
     public void AddDurableStack_reverts_invalid_poll_and_lease_to_defaults()
     {
         var services = new ServiceCollection();
@@ -234,6 +250,22 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_reverts_invalid_ingestion_flush_interval_to_default()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.Eventing.IngestionFlushInterval = TimeSpan.Zero;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(TimeSpan.FromSeconds(5), options.Eventing.IngestionFlushInterval);
+    }
+
+    [Fact]
     public void AddDurableStack_defaults_job_activation_to_scoped_per_execution()
     {
         var services = new ServiceCollection();
@@ -243,6 +275,35 @@ public sealed class ServiceCollectionExtensionsTests
         var options = provider.GetRequiredService<DurableStackOptions>();
 
         Assert.Equal(DurableStackJobActivationMode.ScopedPerExecution, options.JobActivation);
+    }
+
+    [Fact]
+    public void AddDurableStack_defaults_worker_name_to_host_or_machine_and_process_id()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        var host = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName;
+        Assert.Equal($"{host}-{Environment.ProcessId}", options.WorkerName);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_blank_worker_name_to_default()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack(options =>
+        {
+            options.WorkerName = "   ";
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        var host = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName;
+        Assert.Equal($"{host}-{Environment.ProcessId}", options.WorkerName);
     }
 
     [Fact]

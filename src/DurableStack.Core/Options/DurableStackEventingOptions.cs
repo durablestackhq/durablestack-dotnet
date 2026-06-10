@@ -4,6 +4,8 @@ namespace DurableStack.Core.Options;
 
 public sealed class DurableStackEventingOptions
 {
+    private static readonly TimeSpan DefaultIngestionFlushInterval = TimeSpan.FromSeconds(5);
+
     public string? TenantId { get; set; }
 
     public string? ClientSecret { get; set; }
@@ -22,5 +24,11 @@ public sealed class DurableStackEventingOptions
 
     public int IngestionMaxRetryAttempts { get; set; } = 5;
 
-    public TimeSpan IngestionFlushInterval { get; set; } = TimeSpan.FromSeconds(5);
+    public TimeSpan IngestionFlushInterval { get; set; } = DefaultIngestionFlushInterval;
+
+    public double IngestionFlushIntervalSeconds
+    {
+        get => IngestionFlushInterval.TotalSeconds;
+        set => IngestionFlushInterval = value > 0 ? TimeSpan.FromSeconds(value) : DefaultIngestionFlushInterval;
+    }
 }

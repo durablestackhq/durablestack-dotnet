@@ -4,15 +4,15 @@ DurableStack supports SQLite as an opt-in durable storage backend.
 
 ## Configuration
 
-Use `ConnectionStrings:DurableStack` and set provider mode under `DurableStack`.
+Set provider mode under `DurableStack` and provide `DurableStack:Sqlite:ConnectionString`.
 
 ```json
 {
-  "ConnectionStrings": {
-    "DurableStack": "Data Source=durable_stack.db"
-  },
   "DurableStack": {
     "StorageProvider": "Sqlite",
+    "Sqlite": {
+      "ConnectionString": "Data Source=durable_stack.db"
+    },
     "DatabaseTablePrefix": "Acme_",
     "PollIntervalSeconds": 0.5,
     "BatchSize": 25,

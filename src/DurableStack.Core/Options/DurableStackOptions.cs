@@ -7,6 +7,12 @@ public sealed class DurableStackOptions
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultLeaseDuration = TimeSpan.FromSeconds(30);
 
+    public static string CreateDefaultWorkerName()
+    {
+        var host = Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName;
+        return $"{host}-{Environment.ProcessId}";
+    }
+
     public DurableStackStorageProvider StorageProvider { get; set; } = DurableStackStorageProvider.InMemory;
 
     public PostgresDurableStackOptions Postgres { get; } = new();
@@ -27,9 +33,7 @@ public sealed class DurableStackOptions
 
     public DurableStackJobActivationMode JobActivation { get; set; } = DurableStackJobActivationMode.ScopedPerExecution;
 
-    public string WorkerName { get; set; } = Environment.MachineName;
-
-    public string ConnectionStringName { get; set; } = "DurableStack";
+    public string WorkerName { get; set; } = CreateDefaultWorkerName();
 
     public string? DatabaseTablePrefix { get; set; }
 
