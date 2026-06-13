@@ -87,6 +87,65 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runId;
     }
 
+    public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
+        string jobName,
+        string jobType,
+        string? payloadJson,
+        DateTimeOffset scheduledForUtc,
+        int maxAttempts,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.NewGuid();
+
+        var sql = $"""
+            insert into {_runsTable} (
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                attempt,
+                max_attempts,
+                created_at_utc,
+                updated_at_utc)
+            select
+                @id,
+                @job_name,
+                @job_type,
+                'pending',
+                @payload_json,
+                @scheduled_for_utc,
+                null,
+                0,
+                @max_attempts,
+                @now_utc,
+                @now_utc
+            where not exists (
+                select 1
+                from {_runsTable}
+                where job_name = @job_name
+                  and status in ('pending', 'leased'));
+            """;
+
+        var nowUtc = DateTimeOffset.UtcNow;
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqliteCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", runId.ToString());
+        command.Parameters.AddWithValue("@job_name", jobName);
+        command.Parameters.AddWithValue("@job_type", jobType);
+        command.Parameters.AddWithValue("@payload_json", (object?)payloadJson ?? DBNull.Value);
+        command.Parameters.AddWithValue("@scheduled_for_utc", ToDbTimestamp(scheduledForUtc));
+        command.Parameters.AddWithValue("@max_attempts", maxAttempts);
+        command.Parameters.AddWithValue("@now_utc", ToDbTimestamp(nowUtc));
+
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+        return affected > 0 ? runId : null;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -230,6 +289,33 @@ public sealed class SqliteJobStore : IDurableJobStore
             cancellationToken,
             new SqliteParameter("@id", runId.ToString()),
             new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
+    }
+
+    public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTimeOffset.UtcNow;
+
+        var sql = $"""
+            update {_runsTable}
+            set
+                status = 'failed',
+                completed_at_utc = @now_utc,
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                updated_at_utc = @now_utc
+            where id = @id
+              and status in ('pending', 'leased');
+            """;
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqliteCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", runId.ToString());
+        command.Parameters.AddWithValue("@now_utc", ToDbTimestamp(nowUtc));
+        command.Parameters.AddWithValue("@error_message", "Run was cancelled.");
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task MarkFailedAsync(
@@ -464,7 +550,10 @@ public sealed class SqliteJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where schedule_type = 'cron'
@@ -490,7 +579,10 @@ public sealed class SqliteJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetInt32(reader.GetOrdinal("enabled")) == 1,
+                AllowConcurrentRuns = reader.GetInt32(reader.GetOrdinal("allow_concurrent_runs")) == 1,
                 NextRunAtUtc = AsOptionalUtcDateTimeOffset(reader, "next_run_at_utc") ?? DateTimeOffset.MinValue,
             });
         }
@@ -603,6 +695,9 @@ public sealed class SqliteJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 enabled,
+                allow_concurrent_runs,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 max_attempts,
                 next_run_at_utc,
                 created_at_utc,
@@ -615,6 +710,9 @@ public sealed class SqliteJobStore : IDurableJobStore
                 @cron_expression,
                 @time_zone,
                 1,
+                @allow_concurrent_runs,
+                @retry_behavior,
+                @retry_initial_delay_seconds,
                 @max_attempts,
                 @next_run_at_utc,
                 @now_utc,
@@ -625,6 +723,9 @@ public sealed class SqliteJobStore : IDurableJobStore
                 cron_expression = excluded.cron_expression,
                 time_zone = excluded.time_zone,
                 enabled = 1,
+                allow_concurrent_runs = excluded.allow_concurrent_runs,
+                retry_behavior = excluded.retry_behavior,
+                retry_initial_delay_seconds = excluded.retry_initial_delay_seconds,
                 max_attempts = excluded.max_attempts,
                 next_run_at_utc = excluded.next_run_at_utc,
                 updated_at_utc = excluded.updated_at_utc;
@@ -638,6 +739,9 @@ public sealed class SqliteJobStore : IDurableJobStore
             new SqliteParameter("@job_type", registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name),
             new SqliteParameter("@cron_expression", registration.CronExpression),
             new SqliteParameter("@time_zone", registration.TimeZone),
+            new SqliteParameter("@allow_concurrent_runs", registration.AllowConcurrentRuns ? 1 : 0),
+            new SqliteParameter("@retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
+            new SqliteParameter("@retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),
             new SqliteParameter("@max_attempts", registration.MaxAttempts),
             new SqliteParameter("@next_run_at_utc", ToDbTimestamp(nextRunAtUtc)),
             new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
@@ -655,7 +759,10 @@ public sealed class SqliteJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where enabled = 1
@@ -684,7 +791,10 @@ public sealed class SqliteJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetInt32(reader.GetOrdinal("enabled")) == 1,
+                AllowConcurrentRuns = reader.GetInt32(reader.GetOrdinal("allow_concurrent_runs")) == 1,
                 NextRunAtUtc = AsUtcDateTimeOffset(reader, "next_run_at_utc"),
             });
         }
@@ -737,7 +847,14 @@ public sealed class SqliteJobStore : IDurableJobStore
             where name = @name
               and enabled = 1
               and schedule_type = 'cron'
-              and next_run_at_utc = @expected_next_run_at_utc;
+              and next_run_at_utc = @expected_next_run_at_utc
+              and (
+                allow_concurrent_runs = 1
+                or not exists (
+                    select 1
+                    from {_runsTable} active
+                    where active.job_name = @name
+                      and active.status in ('pending', 'leased')));
             """;
 
         await using (var update = new SqliteCommand(updateSql, connection, transaction))
@@ -839,6 +956,7 @@ public sealed class SqliteJobStore : IDurableJobStore
     {
         var migrationSql = BuildInitMigrationSql();
         await ExecuteNonQueryAsync(migrationSql, cancellationToken);
+        await EnsureAllowConcurrentRunsColumnAsync(cancellationToken);
     }
 
     private async Task ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqliteParameter[] parameters)
@@ -906,6 +1024,44 @@ public sealed class SqliteJobStore : IDurableJobStore
         return DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal);
     }
 
+    private static int? AsOptionalInt32(SqliteDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetInt32(ordinal);
+    }
+
+    private static Core.Models.RetryBehavior? ParseRetryBehavior(SqliteDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetString(ordinal);
+        return value switch
+        {
+            "fixed_delay" => Core.Models.RetryBehavior.FixedDelay,
+            "backoff" => Core.Models.RetryBehavior.Backoff,
+            _ => null,
+        };
+    }
+
+    private static string? ToRetryBehaviorValue(Core.Models.RetryBehavior? retryBehavior)
+    {
+        return retryBehavior switch
+        {
+            Core.Models.RetryBehavior.FixedDelay => "fixed_delay",
+            Core.Models.RetryBehavior.Backoff => "backoff",
+            _ => null,
+        };
+    }
+
     private static int TryGetOrdinal(SqliteDataReader reader, string column)
     {
         for (var i = 0; i < reader.FieldCount; i++)
@@ -931,9 +1087,11 @@ public sealed class SqliteJobStore : IDurableJobStore
         sb.AppendLine("    cron_expression text null,");
         sb.AppendLine("    time_zone text null,");
         sb.AppendLine("    enabled integer not null default 1,");
+        sb.AppendLine("    allow_concurrent_runs integer not null default 0,");
+        sb.AppendLine("    retry_behavior text null,");
+        sb.AppendLine("    retry_initial_delay_seconds integer null,");
         sb.AppendLine("    payload_json text null,");
         sb.AppendLine("    max_attempts integer not null default 3,");
-        sb.AppendLine("    retry_backoff_seconds integer not null default 60,");
         sb.AppendLine("    next_run_at_utc text null,");
         sb.AppendLine("    last_run_at_utc text null,");
         sb.AppendLine("    created_at_utc text not null,");
@@ -977,6 +1135,56 @@ public sealed class SqliteJobStore : IDurableJobStore
         sb.AppendLine(");");
 
         return sb.ToString();
+    }
+
+    private async Task EnsureAllowConcurrentRunsColumnAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        if (!await HasColumnAsync(connection, "allow_concurrent_runs", cancellationToken))
+        {
+            var sql = $"alter table {_jobsTable} add column allow_concurrent_runs integer not null default 0;";
+            await using var command = new SqliteCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await HasColumnAsync(connection, "retry_behavior", cancellationToken))
+        {
+            var sql = $"alter table {_jobsTable} add column retry_behavior text null;";
+            await using var command = new SqliteCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await HasColumnAsync(connection, "retry_initial_delay_seconds", cancellationToken))
+        {
+            var sql = $"alter table {_jobsTable} add column retry_initial_delay_seconds integer null;";
+            await using var command = new SqliteCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (await HasColumnAsync(connection, "retry_backoff_seconds", cancellationToken))
+        {
+            var sql = $"alter table {_jobsTable} drop column retry_backoff_seconds;";
+            await using var command = new SqliteCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private async Task<bool> HasColumnAsync(SqliteConnection connection, string columnName, CancellationToken cancellationToken)
+    {
+        var pragmaSql = $"PRAGMA table_info({_jobsTable});";
+        await using var pragma = new SqliteCommand(pragmaSql, connection);
+        await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            if (string.Equals(reader.GetString(1), columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string ToDbTimestamp(DateTimeOffset value)

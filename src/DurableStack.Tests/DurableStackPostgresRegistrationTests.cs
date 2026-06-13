@@ -58,4 +58,54 @@ public sealed class DurableStackPostgresRegistrationTests
         Assert.Equal("Host=localhost;Database=durable_stack;Username=postgres;Password=postgres", options.Postgres.ConnectionString);
         Assert.Equal(DurableStackStorageProvider.Postgres, options.StorageProvider);
     }
+
+    [Fact]
+    public void AddDurableStackPostgres_with_connection_string_uses_registered_configuration_when_present()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["DurableStack:DatabaseTablePrefix"] = "Acme_",
+                ["DurableStack:BatchSize"] = "25",
+            })
+            .Build();
+
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddDurableStackPostgres("Host=localhost;Database=durable_stack;Username=postgres;Password=postgres");
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal("Acme_", options.DatabaseTablePrefix);
+        Assert.Equal(25, options.BatchSize);
+    }
+
+    [Fact]
+    public void AddDurableStackPostgres_with_connection_string_explicit_configure_overrides_registered_configuration()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["DurableStack:DatabaseTablePrefix"] = "Acme_",
+                ["DurableStack:BatchSize"] = "25",
+            })
+            .Build();
+
+        services.AddSingleton<IConfiguration>(configuration);
+        services.AddDurableStackPostgres(
+            "Host=localhost;Database=durable_stack;Username=postgres;Password=postgres",
+            options =>
+            {
+                options.DatabaseTablePrefix = "Custom_";
+                options.BatchSize = 12;
+            });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal("Custom_", options.DatabaseTablePrefix);
+        Assert.Equal(12, options.BatchSize);
+    }
 }

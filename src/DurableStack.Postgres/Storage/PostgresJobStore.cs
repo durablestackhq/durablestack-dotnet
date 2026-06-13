@@ -84,6 +84,64 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runId;
     }
 
+    public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
+        string jobName,
+        string jobType,
+        string? payloadJson,
+        DateTimeOffset scheduledForUtc,
+        int maxAttempts,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.NewGuid();
+
+        var sql = $"""
+            insert into {_runsTable} (
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                attempt,
+                max_attempts,
+                created_at_utc,
+                updated_at_utc)
+            select
+                @id,
+                @job_name,
+                @job_type,
+                'pending',
+                cast(@payload_json as jsonb),
+                @scheduled_for_utc,
+                null,
+                0,
+                @max_attempts,
+                now(),
+                now()
+            where not exists (
+                select 1
+                from {_runsTable}
+                where job_name = @job_name
+                  and status in ('pending', 'leased'))
+            returning id;
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", runId);
+        command.Parameters.AddWithValue("job_name", jobName);
+        command.Parameters.AddWithValue("job_type", jobType);
+        command.Parameters.AddWithValue("payload_json", (object?)payloadJson ?? DBNull.Value);
+        command.Parameters.AddWithValue("scheduled_for_utc", scheduledForUtc.UtcDateTime);
+        command.Parameters.AddWithValue("max_attempts", maxAttempts);
+
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return result is null or DBNull ? null : runId;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -172,6 +230,30 @@ public sealed class PostgresJobStore : IDurableJobStore
             """;
 
         await ExecuteNonQueryAsync(sql, cancellationToken, new NpgsqlParameter("id", runId));
+    }
+
+    public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runsTable}
+            set
+                status = 'failed',
+                completed_at_utc = now(),
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                updated_at_utc = now()
+            where id = @id
+              and status in ('pending', 'leased');
+            """;
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", runId);
+        command.Parameters.AddWithValue("error_message", "Run was cancelled.");
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task MarkFailedAsync(
@@ -407,7 +489,10 @@ public sealed class PostgresJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where schedule_type = 'cron'
@@ -433,7 +518,10 @@ public sealed class PostgresJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                AllowConcurrentRuns = reader.GetBoolean(reader.GetOrdinal("allow_concurrent_runs")),
                 NextRunAtUtc = AsOptionalUtcDateTimeOffset(reader, "next_run_at_utc") ?? DateTimeOffset.MinValue,
             });
         }
@@ -545,6 +633,9 @@ public sealed class PostgresJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 enabled,
+                allow_concurrent_runs,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 max_attempts,
                 next_run_at_utc,
                 created_at_utc,
@@ -557,6 +648,9 @@ public sealed class PostgresJobStore : IDurableJobStore
                 @cron_expression,
                 @time_zone,
                 true,
+                @allow_concurrent_runs,
+                @retry_behavior,
+                @retry_initial_delay_seconds,
                 @max_attempts,
                 @next_run_at_utc,
                 now(),
@@ -569,6 +663,9 @@ public sealed class PostgresJobStore : IDurableJobStore
                 cron_expression = excluded.cron_expression,
                 time_zone = excluded.time_zone,
                 enabled = true,
+                allow_concurrent_runs = excluded.allow_concurrent_runs,
+                retry_behavior = excluded.retry_behavior,
+                retry_initial_delay_seconds = excluded.retry_initial_delay_seconds,
                 max_attempts = excluded.max_attempts,
                 next_run_at_utc = excluded.next_run_at_utc,
                 updated_at_utc = now();
@@ -582,6 +679,9 @@ public sealed class PostgresJobStore : IDurableJobStore
             new NpgsqlParameter("job_type", registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name),
             new NpgsqlParameter("cron_expression", registration.CronExpression),
             new NpgsqlParameter("time_zone", registration.TimeZone),
+            new NpgsqlParameter("allow_concurrent_runs", registration.AllowConcurrentRuns),
+            new NpgsqlParameter("retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
+            new NpgsqlParameter("retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),
             new NpgsqlParameter("max_attempts", registration.MaxAttempts),
             new NpgsqlParameter("next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
@@ -598,7 +698,10 @@ public sealed class PostgresJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where enabled = true
@@ -627,7 +730,10 @@ public sealed class PostgresJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                AllowConcurrentRuns = reader.GetBoolean(reader.GetOrdinal("allow_concurrent_runs")),
                 NextRunAtUtc = AsUtcDateTimeOffset(reader, "next_run_at_utc"),
             });
         }
@@ -675,6 +781,13 @@ public sealed class PostgresJobStore : IDurableJobStore
                   and enabled = true
                   and schedule_type = 'cron'
                   and next_run_at_utc = @expected_next_run_at_utc
+                  and (
+                      allow_concurrent_runs = true
+                      or not exists (
+                          select 1
+                          from {_runsTable} active
+                          where active.job_name = @name
+                            and active.status in ('pending', 'leased')))
                 returning name
             )
             insert into {_runsTable} (
@@ -813,6 +926,44 @@ public sealed class PostgresJobStore : IDurableJobStore
         return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
     }
 
+    private static int? AsOptionalInt32(NpgsqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetInt32(ordinal);
+    }
+
+    private static Core.Models.RetryBehavior? ParseRetryBehavior(NpgsqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetString(ordinal);
+        return value switch
+        {
+            "fixed_delay" => Core.Models.RetryBehavior.FixedDelay,
+            "backoff" => Core.Models.RetryBehavior.Backoff,
+            _ => null,
+        };
+    }
+
+    private static string? ToRetryBehaviorValue(Core.Models.RetryBehavior? retryBehavior)
+    {
+        return retryBehavior switch
+        {
+            Core.Models.RetryBehavior.FixedDelay => "fixed_delay",
+            Core.Models.RetryBehavior.Backoff => "backoff",
+            _ => null,
+        };
+    }
+
     private static int TryGetOrdinal(NpgsqlDataReader reader, string column)
     {
         for (var i = 0; i < reader.FieldCount; i++)
@@ -844,9 +995,11 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine("    cron_expression text null,");
         sb.AppendLine("    time_zone text null,");
         sb.AppendLine("    enabled boolean not null default true,");
+        sb.AppendLine("    allow_concurrent_runs boolean not null default false,");
+        sb.AppendLine("    retry_behavior text null,");
+        sb.AppendLine("    retry_initial_delay_seconds int null,");
         sb.AppendLine("    payload_json jsonb null,");
         sb.AppendLine("    max_attempts int not null default 3,");
-        sb.AppendLine("    retry_backoff_seconds int not null default 60,");
         sb.AppendLine("    next_run_at_utc timestamptz null,");
         sb.AppendLine("    last_run_at_utc timestamptz null,");
         sb.AppendLine("    created_at_utc timestamptz not null default now(),");
@@ -880,6 +1033,10 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists ix_{_runsTable}_lease on {_runsTable} (lease_until_utc);");
         sb.AppendLine($"create index if not exists ix_{_runsTable}_job_name on {_runsTable} (job_name);");
         sb.AppendLine($"create index if not exists ix_{_runsTable}_completed on {_runsTable} (status, completed_at_utc);");
+        sb.AppendLine($"alter table {_jobsTable} add column if not exists allow_concurrent_runs boolean not null default false;");
+        sb.AppendLine($"alter table {_jobsTable} add column if not exists retry_behavior text null;");
+        sb.AppendLine($"alter table {_jobsTable} add column if not exists retry_initial_delay_seconds int null;");
+        sb.AppendLine($"alter table {_jobsTable} drop column if exists retry_backoff_seconds;");
         sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc timestamptz null;");
         sb.AppendLine($"create unique index if not exists ix_{_runsTable}_recurring_slot_unique on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
 

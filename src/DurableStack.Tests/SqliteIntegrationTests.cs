@@ -135,6 +135,7 @@ public sealed class SqliteIntegrationTests
             TimeZone = registration.TimeZone,
             MaxAttempts = registration.MaxAttempts,
             Enabled = true,
+            AllowConcurrentRuns = registration.AllowConcurrentRuns,
             NextRunAtUtc = dueAt,
         };
 

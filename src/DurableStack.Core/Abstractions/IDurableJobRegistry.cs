@@ -11,10 +11,20 @@ public interface IDurableJobRegistry
     void Register<TJob, TArgs>(string jobName, int maxAttempts = 3)
         where TJob : class, IDurableJob<TArgs>;
 
-    void RegisterRecurring<TJob>(string jobName, string cronExpression, string timeZone = "UTC", int maxAttempts = 3)
+    void RegisterRecurring<TJob>(
+        string jobName,
+        string cronExpression,
+        string timeZone = "UTC",
+        int maxAttempts = 3,
+        bool allowConcurrentRuns = false)
         where TJob : class, IDurableJob;
 
-    void RegisterRecurring<TJob, TArgs>(string jobName, string cronExpression, string timeZone = "UTC", int maxAttempts = 3)
+    void RegisterRecurring<TJob, TArgs>(
+        string jobName,
+        string cronExpression,
+        string timeZone = "UTC",
+        int maxAttempts = 3,
+        bool allowConcurrentRuns = false)
         where TJob : class, IDurableJob<TArgs>;
 
     DurableJobRegistration? FindByName(string jobName);

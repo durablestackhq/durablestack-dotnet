@@ -193,6 +193,7 @@ public sealed class PostgresIntegrationTests
             TimeZone = registration.TimeZone,
             MaxAttempts = registration.MaxAttempts,
             Enabled = true,
+            AllowConcurrentRuns = registration.AllowConcurrentRuns,
             NextRunAtUtc = dueAt,
         };
 

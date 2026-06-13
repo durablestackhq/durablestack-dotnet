@@ -1,5 +1,6 @@
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
+using DurableStack.Core.Models;
 using DurableStack.Hosting.DependencyInjection;
 
 // Optional: pin a stable job name instead of defaulting to the class name.

@@ -19,6 +19,7 @@ var connString = builder.Configuration.GetConnectionString("DurableStack");
 builder.Services.AddDurableStackPostgres(connString, options =>
 {
     //options.WorkerName = workerName;
+    options.DatabaseTablePrefix = "Acme_";
 });
 // Optional additional sink for local debugging:
 // builder.Services.UseDurableStackLoggingEventSink();
@@ -170,10 +171,17 @@ app.MapPost("/schedules/{jobName}/run-now", async (
         return Results.BadRequest(new { error = "jobName is required." });
     }
 
-    var runId = await schedules.RunScheduledJobNowAsync(jobName, cancellationToken);
-    return runId.HasValue
-        ? Results.Accepted($"/runs/{runId}", new { jobName, runId, action = "queued-now" })
-        : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
+    try
+    {
+        var runId = await schedules.RunScheduledJobNowAsync(jobName, cancellationToken);
+        return runId.HasValue
+            ? Results.Accepted($"/runs/{runId}", new { jobName, runId, action = "queued-now" })
+            : Results.NotFound(new { error = $"Schedule '{jobName}' was not found." });
+    }
+    catch (ScheduledJobRunBlockedException ex)
+    {
+        return Results.Conflict(new { error = ex.Message, jobName = ex.JobName, action = "run-now-blocked" });
+    }
 });
 
 app.MapPut("/schedules/{jobName}/cron", async (

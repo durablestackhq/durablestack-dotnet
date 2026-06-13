@@ -52,6 +52,11 @@ public sealed class DefaultDurableStackClient : IDurableStackClient
             cancellationToken);
     }
 
+    public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken = default)
+    {
+        return await _store.CancelRunAsync(runId, cancellationToken);
+    }
+
     private static string? SerializePayload(object? payload)
     {
         return payload is null ? null : JsonSerializer.Serialize(payload);

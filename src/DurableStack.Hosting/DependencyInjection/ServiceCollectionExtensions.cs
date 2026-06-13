@@ -87,8 +87,7 @@ public static class ServiceCollectionExtensions
         string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configure?.Invoke(options);
+        var options = CreateOptionsFromRegisteredConfigurationOrDefault(services, configure);
 
         var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.Postgres.ConnectionString);
         if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
@@ -127,8 +126,7 @@ public static class ServiceCollectionExtensions
         string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configure?.Invoke(options);
+        var options = CreateOptionsFromRegisteredConfigurationOrDefault(services, configure);
 
         var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.SqlServer.ConnectionString);
         if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
@@ -148,8 +146,7 @@ public static class ServiceCollectionExtensions
         string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configure?.Invoke(options);
+        var options = CreateOptionsFromRegisteredConfigurationOrDefault(services, configure);
 
         var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.Sqlite.ConnectionString);
         if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
@@ -169,8 +166,7 @@ public static class ServiceCollectionExtensions
         string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configure?.Invoke(options);
+        var options = CreateOptionsFromRegisteredConfigurationOrDefault(services, configure);
 
         var effectiveConnectionString = ResolveProviderConnectionString(connectionString, options.MySql.ConnectionString);
         if (!string.IsNullOrWhiteSpace(effectiveConnectionString))
@@ -198,10 +194,45 @@ public static class ServiceCollectionExtensions
         this IServiceCollection services,
         Action<DurableStackOptions>? configure = null)
     {
-        var options = new DurableStackOptions();
-        configure?.Invoke(options);
+        var options = CreateOptionsFromRegisteredConfigurationOrDefault(services, configure);
 
         return services.AddDurableStack(options);
+    }
+
+    private static DurableStackOptions CreateOptionsFromRegisteredConfigurationOrDefault(
+        IServiceCollection services,
+        Action<DurableStackOptions>? configure)
+    {
+        var configuration = TryGetRegisteredConfiguration(services);
+        return configuration is null
+            ? CreateOptions(configure)
+            : CreateOptionsFromConfiguration(configuration, configure);
+    }
+
+    private static IConfiguration? TryGetRegisteredConfiguration(IServiceCollection services)
+    {
+        for (var i = services.Count - 1; i >= 0; i--)
+        {
+            var descriptor = services[i];
+            if (descriptor.ServiceType != typeof(IConfiguration))
+            {
+                continue;
+            }
+
+            if (descriptor.ImplementationInstance is IConfiguration configuration)
+            {
+                return configuration;
+            }
+        }
+
+        return null;
+    }
+
+    private static DurableStackOptions CreateOptions(Action<DurableStackOptions>? configure)
+    {
+        var options = new DurableStackOptions();
+        configure?.Invoke(options);
+        return options;
     }
 
     private static DurableStackOptions CreateOptionsFromConfiguration(
@@ -417,6 +448,9 @@ public static class ServiceCollectionExtensions
             MaxAttempts = options.MaxAttempts,
             CronExpression = options.CronExpression,
             TimeZone = options.TimeZone,
+            AllowConcurrentRuns = options.AllowConcurrentRuns,
+            RetryBehavior = options.RetryBehavior,
+            RetryInitialDelaySeconds = options.RetryInitialDelaySeconds,
         });
 
         return services;
@@ -459,6 +493,7 @@ public static class ServiceCollectionExtensions
             MaxAttempts = maxAttempts,
             CronExpression = cronExpression,
             TimeZone = timeZone,
+            AllowConcurrentRuns = false,
         });
 
         return services;
@@ -484,6 +519,9 @@ public static class ServiceCollectionExtensions
             MaxAttempts = options.MaxAttempts,
             CronExpression = options.CronExpression,
             TimeZone = options.TimeZone,
+            AllowConcurrentRuns = options.AllowConcurrentRuns,
+            RetryBehavior = options.RetryBehavior,
+            RetryInitialDelaySeconds = options.RetryInitialDelaySeconds,
         });
 
         return services;
@@ -528,6 +566,7 @@ public static class ServiceCollectionExtensions
             MaxAttempts = maxAttempts,
             CronExpression = cronExpression,
             TimeZone = timeZone,
+            AllowConcurrentRuns = false,
         });
 
         return services;
@@ -622,6 +661,18 @@ public static class ServiceCollectionExtensions
                 $"Job '{jobType.FullName}' has invalid MaxAttempts={maxAttempts}. MaxAttempts must be greater than zero.");
         }
 
+        int? retryInitialDelaySeconds = durableAttribute?.RetryInitialDelaySeconds;
+        if (retryInitialDelaySeconds == 0)
+        {
+            retryInitialDelaySeconds = null;
+        }
+
+        if (retryInitialDelaySeconds < 0)
+        {
+            throw new InvalidOperationException(
+                $"Job '{jobType.FullName}' has invalid RetryInitialDelaySeconds={retryInitialDelaySeconds}. RetryInitialDelaySeconds must be greater than zero.");
+        }
+
         string? cronExpression = null;
         var timeZone = "UTC";
 
@@ -651,6 +702,9 @@ public static class ServiceCollectionExtensions
             MaxAttempts = maxAttempts,
             CronExpression = cronExpression,
             TimeZone = timeZone,
+            AllowConcurrentRuns = recurringAttribute?.AllowConcurrentRuns ?? false,
+            RetryBehavior = durableAttribute is null ? null : durableAttribute.RetryBehavior,
+            RetryInitialDelaySeconds = retryInitialDelaySeconds,
         };
     }
 
