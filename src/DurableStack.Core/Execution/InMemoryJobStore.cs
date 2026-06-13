@@ -92,6 +92,29 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.CompletedTask;
     }
 
+    public Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_runs.TryGetValue(runId, out var run))
+            {
+                return Task.FromResult(false);
+            }
+
+            if (run.Status == "succeeded" || run.Status == "failed")
+            {
+                return Task.FromResult(false);
+            }
+
+            run.Status = "failed";
+            run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            run.LeaseOwner = null;
+            run.LeaseUntilUtc = null;
+            run.ErrorMessage = "Run was cancelled.";
+            return Task.FromResult(true);
+        }
+    }
+
     public Task MarkFailedAsync(
         Guid runId,
         Exception exception,
@@ -181,6 +204,42 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    public Task<Guid?> TryEnqueueIfNoActiveRunAsync(
+        string jobName,
+        string jobType,
+        string? payloadJson,
+        DateTimeOffset scheduledForUtc,
+        int maxAttempts,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var hasActive = _runs.Values.Any(
+                x => x.JobName.Equals(jobName, StringComparison.OrdinalIgnoreCase)
+                    && (x.Status == "pending" || x.Status == "leased"));
+
+            if (hasActive)
+            {
+                return Task.FromResult<Guid?>(null);
+            }
+
+            var run = new JobRunRecord
+            {
+                Id = Guid.NewGuid(),
+                JobName = jobName,
+                JobType = jobType,
+                Status = "pending",
+                ScheduledForUtc = scheduledForUtc,
+                Attempt = 0,
+                MaxAttempts = maxAttempts,
+                PayloadJson = payloadJson,
+            };
+
+            _runs[run.Id] = run;
+            return Task.FromResult<Guid?>(run.Id);
+        }
+    }
+
     public Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
@@ -219,6 +278,9 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 TimeZone = state.TimeZone,
                 MaxAttempts = state.MaxAttempts,
                 Enabled = enabled,
+                AllowConcurrentRuns = state.AllowConcurrentRuns,
+                RetryBehavior = state.RetryBehavior,
+                RetryInitialDelaySeconds = state.RetryInitialDelaySeconds,
                 NextRunAtUtc = next,
             };
 
@@ -248,6 +310,9 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 TimeZone = timeZone,
                 MaxAttempts = state.MaxAttempts,
                 Enabled = state.Enabled,
+                AllowConcurrentRuns = state.AllowConcurrentRuns,
+                RetryBehavior = state.RetryBehavior,
+                RetryInitialDelaySeconds = state.RetryInitialDelaySeconds,
                 NextRunAtUtc = nextRunAtUtc,
             };
 
@@ -301,6 +366,9 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 TimeZone = registration.TimeZone,
                 MaxAttempts = registration.MaxAttempts,
                 Enabled = true,
+                AllowConcurrentRuns = registration.AllowConcurrentRuns,
+                RetryBehavior = registration.RetryBehavior,
+                RetryInitialDelaySeconds = registration.RetryInitialDelaySeconds,
                 NextRunAtUtc = nextRunAtUtc,
             };
         }
@@ -357,6 +425,13 @@ public sealed class InMemoryJobStore : IDurableJobStore
             }
 
             if (state.NextRunAtUtc != recurring.NextRunAtUtc)
+            {
+                return Task.FromResult(false);
+            }
+
+            if (!state.AllowConcurrentRuns
+                && _runs.Values.Any(x => x.JobName.Equals(state.JobName, StringComparison.OrdinalIgnoreCase)
+                    && (x.Status == "pending" || x.Status == "leased")))
             {
                 return Task.FromResult(false);
             }
@@ -430,6 +505,9 @@ public sealed class InMemoryJobStore : IDurableJobStore
             TimeZone = source.TimeZone,
             MaxAttempts = source.MaxAttempts,
             Enabled = source.Enabled,
+            AllowConcurrentRuns = source.AllowConcurrentRuns,
+            RetryBehavior = source.RetryBehavior,
+            RetryInitialDelaySeconds = source.RetryInitialDelaySeconds,
             NextRunAtUtc = source.NextRunAtUtc,
         };
     }

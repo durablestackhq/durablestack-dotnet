@@ -57,6 +57,12 @@ public sealed class DurableStackOptions
 
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(5);
 
+    public TimeSpan RetryMaxDelay { get; set; } = TimeSpan.FromHours(1);
+
+    public bool RetryJitterEnabled { get; set; }
+
+    public double RetryJitterRatio { get; set; } = 0.2;
+
     public DurableStackOptions UseInMemory()
     {
         StorageProvider = DurableStackStorageProvider.InMemory;

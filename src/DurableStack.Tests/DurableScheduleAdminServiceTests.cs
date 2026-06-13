@@ -114,6 +114,61 @@ public sealed class DurableScheduleAdminServiceTests
     }
 
     [Fact]
+    public async Task RunScheduledJobNowAsync_throws_when_job_has_active_run_and_concurrency_disabled()
+    {
+        var store = new InMemoryJobStore();
+        var registration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(object),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { registration });
+        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+
+        IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
+
+        _ = await admin.RunScheduledJobNowAsync("heartbeat");
+
+        var ex = await Assert.ThrowsAsync<ScheduledJobRunBlockedException>(() =>
+            admin.RunScheduledJobNowAsync("heartbeat"));
+
+        Assert.Equal("heartbeat", ex.JobName);
+    }
+
+    [Fact]
+    public async Task RunScheduledJobNowAsync_allows_multiple_when_concurrency_enabled()
+    {
+        var store = new InMemoryJobStore();
+        var registration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(object),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+            AllowConcurrentRuns = true,
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { registration });
+        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+
+        IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
+
+        var first = await admin.RunScheduledJobNowAsync("heartbeat");
+        var second = await admin.RunScheduledJobNowAsync("heartbeat");
+
+        Assert.NotNull(first);
+        Assert.NotNull(second);
+
+        var runs = await store.GetRunsByJobNameAsync("heartbeat", 10, CancellationToken.None);
+        Assert.Equal(2, runs.Count(x => x.ScheduleSlotUtc is null));
+    }
+
+    [Fact]
     public async Task RunScheduledJobNowAsync_returns_null_for_unknown_job()
     {
         var store = new InMemoryJobStore();

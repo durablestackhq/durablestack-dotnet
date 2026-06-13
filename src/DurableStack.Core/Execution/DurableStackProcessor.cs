@@ -14,6 +14,7 @@ namespace DurableStack.Core.Execution;
 public sealed class DurableStackProcessor : IDurableStackProcessor
 {
     private readonly IDurableJobStore _store;
+    private readonly IDurableJobRegistry _registry;
     private readonly IDurableJobRunner _runner;
     private readonly IRecurringJobScheduler _recurringScheduler;
     private readonly DurableStackOptions _options;
@@ -24,6 +25,7 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
 
     public DurableStackProcessor(
         IDurableJobStore store,
+        IDurableJobRegistry registry,
         IDurableJobRunner runner,
         IRecurringJobScheduler recurringScheduler,
         DurableStackOptions options,
@@ -31,6 +33,7 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
         DurableStackEventFactory eventFactory)
     {
         _store = store;
+        _registry = registry;
         _runner = runner;
         _recurringScheduler = recurringScheduler;
         _options = options;
@@ -139,7 +142,7 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
         {
             var failedAt = DateTimeOffset.UtcNow;
             var shouldRetry = run.Attempt < run.MaxAttempts;
-            DateTimeOffset? retryAt = shouldRetry ? DateTimeOffset.UtcNow.Add(_options.RetryDelay) : null;
+            DateTimeOffset? retryAt = shouldRetry ? DateTimeOffset.UtcNow.Add(CalculateRetryDelay(run)) : null;
             await _store.MarkFailedAsync(run.Id, ex, shouldRetry, retryAt, cancellationToken);
             DurableStackTelemetry.JobsFailed.Add(1);
 
@@ -175,6 +178,33 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
                     cancellationToken);
             }
         }
+    }
+
+    private TimeSpan CalculateRetryDelay(JobRunRecord run)
+    {
+        var registration = _registry.FindByName(run.JobName);
+        var behavior = registration?.RetryBehavior ?? RetryBehavior.FixedDelay;
+        var baseDelay = registration?.RetryInitialDelaySeconds is > 0
+            ? TimeSpan.FromSeconds(registration.RetryInitialDelaySeconds.Value)
+            : _options.RetryDelay;
+
+        var delay = behavior == RetryBehavior.Backoff
+            ? TimeSpan.FromMilliseconds(baseDelay.TotalMilliseconds * Math.Pow(2, Math.Max(0, run.Attempt - 1)))
+            : baseDelay;
+
+        if (_options.RetryJitterEnabled)
+        {
+            var ratio = Math.Clamp(_options.RetryJitterRatio, 0, 1);
+            var factor = 1 + ((Random.Shared.NextDouble() * 2 - 1) * ratio);
+            delay = TimeSpan.FromMilliseconds(Math.Max(0, delay.TotalMilliseconds * factor));
+        }
+
+        if (_options.RetryMaxDelay > TimeSpan.Zero && delay > _options.RetryMaxDelay)
+        {
+            delay = _options.RetryMaxDelay;
+        }
+
+        return delay;
     }
 
     private async Task PublishEventAsync(DurableStackEvent @event, CancellationToken cancellationToken)

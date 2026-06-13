@@ -1,4 +1,5 @@
 using System;
+using DurableStack.Core.Models;
 
 namespace DurableStack.Hosting.DependencyInjection;
 
@@ -9,6 +10,12 @@ public sealed class DurableJobOptions
     public string? CronExpression { get; private set; }
 
     public string TimeZone { get; private set; } = "UTC";
+
+    public bool AllowConcurrentRuns { get; private set; }
+
+    public RetryBehavior? RetryBehavior { get; private set; }
+
+    public int? RetryInitialDelaySeconds { get; private set; }
 
     public DurableJobOptions WithMaxAttempts(int maxAttempts)
     {
@@ -35,6 +42,29 @@ public sealed class DurableJobOptions
 
         CronExpression = cronExpression;
         TimeZone = timeZone;
+        return this;
+    }
+
+    public DurableJobOptions WithAllowConcurrentRuns(bool allowConcurrentRuns = true)
+    {
+        AllowConcurrentRuns = allowConcurrentRuns;
+        return this;
+    }
+
+    public DurableJobOptions WithRetryBehavior(RetryBehavior retryBehavior)
+    {
+        RetryBehavior = retryBehavior;
+        return this;
+    }
+
+    public DurableJobOptions WithRetryInitialDelaySeconds(int retryInitialDelaySeconds)
+    {
+        if (retryInitialDelaySeconds <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(retryInitialDelaySeconds), "Retry initial delay must be greater than zero.");
+        }
+
+        RetryInitialDelaySeconds = retryInitialDelaySeconds;
         return this;
     }
 }
