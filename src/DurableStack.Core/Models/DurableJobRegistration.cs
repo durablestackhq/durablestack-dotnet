@@ -16,5 +16,11 @@ public sealed class DurableJobRegistration
 
     public string TimeZone { get; init; } = "UTC";
 
+    public bool AllowConcurrentRuns { get; init; }
+
+    public RetryBehavior? RetryBehavior { get; init; }
+
+    public int? RetryInitialDelaySeconds { get; init; }
+
     public bool IsRecurring => !string.IsNullOrWhiteSpace(CronExpression);
 }

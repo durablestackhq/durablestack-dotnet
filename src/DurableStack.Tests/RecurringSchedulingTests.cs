@@ -158,4 +158,75 @@ public sealed class RecurringSchedulingTests
         var dueAfter = await store.GetDueRecurringJobsAsync(DateTimeOffset.UtcNow, 10, CancellationToken.None);
         Assert.Contains(dueAfter, x => x.JobName == "every-minute-job");
     }
+
+    [Fact]
+    public async Task Scheduler_skips_materialization_when_active_run_exists_and_concurrency_disabled()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "every-minute-job",
+                JobType = typeof(TestNoArgsJob),
+                MaxAttempts = 3,
+                CronExpression = "* * * * *",
+                TimeZone = "UTC",
+            },
+        });
+
+        var initializer = new RecurringJobInitializer(registry, store);
+        await initializer.InitializeAsync(CancellationToken.None);
+        await store.UpdateRecurringNextRunAsync("every-minute-job", DateTimeOffset.UtcNow.AddSeconds(-1), CancellationToken.None);
+
+        var scheduler = new RecurringJobScheduler(store, registry, options);
+        var createdFirst = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
+        var createdSecond = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
+
+        Assert.Equal(1, createdFirst);
+        Assert.Equal(0, createdSecond);
+
+        var runs = await store.GetRunsByJobNameAsync("every-minute-job", 10, CancellationToken.None);
+        Assert.Single(runs);
+    }
+
+    [Fact]
+    public async Task Scheduler_materializes_multiple_when_active_run_exists_and_concurrency_enabled()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions
+        {
+            Recurring =
+            {
+                CatchUpPolicy = RecurringCatchUpPolicy.CatchUp,
+            },
+        };
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "every-minute-job",
+                JobType = typeof(TestNoArgsJob),
+                MaxAttempts = 3,
+                CronExpression = "* * * * *",
+                TimeZone = "UTC",
+                AllowConcurrentRuns = true,
+            },
+        });
+
+        var initializer = new RecurringJobInitializer(registry, store);
+        await initializer.InitializeAsync(CancellationToken.None);
+        await store.UpdateRecurringNextRunAsync("every-minute-job", DateTimeOffset.UtcNow.AddMinutes(-10), CancellationToken.None);
+
+        var scheduler = new RecurringJobScheduler(store, registry, options);
+        var createdFirst = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
+        var createdSecond = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
+
+        Assert.Equal(1, createdFirst);
+        Assert.Equal(1, createdSecond);
+
+        var runs = await store.GetRunsByJobNameAsync("every-minute-job", 10, CancellationToken.None);
+        Assert.Equal(2, runs.Count);
+    }
 }

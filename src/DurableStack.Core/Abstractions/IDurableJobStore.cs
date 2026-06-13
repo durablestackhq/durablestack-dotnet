@@ -24,6 +24,8 @@ public interface IDurableJobStore
 
     Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken);
 
+    Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken);
+
     Task MarkFailedAsync(
         Guid runId,
         Exception exception,
@@ -42,6 +44,14 @@ public interface IDurableJobStore
 
     Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
+        CancellationToken cancellationToken);
+
+    Task<Guid?> TryEnqueueIfNoActiveRunAsync(
+        string jobName,
+        string jobType,
+        string? payloadJson,
+        DateTimeOffset scheduledForUtc,
+        int maxAttempts,
         CancellationToken cancellationToken);
 
     Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(

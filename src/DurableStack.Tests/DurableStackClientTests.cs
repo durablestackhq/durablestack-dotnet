@@ -60,4 +60,29 @@ public sealed class DurableStackClientTests
         Assert.Equal(run.Id, runId);
         Assert.Equal(scheduledFor, run.ScheduledForUtc);
     }
+
+    [Fact]
+    public async Task CancelRunAsync_marks_pending_run_as_failed()
+    {
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "cancel-job",
+                JobType = typeof(TestNoArgsJob),
+                MaxAttempts = 2,
+            },
+        });
+
+        var client = new DefaultDurableStackClient(store, registry);
+        var runId = await client.EnqueueAsync<TestNoArgsJob>(cancellationToken: CancellationToken.None);
+
+        var cancelled = await client.CancelRunAsync(runId, CancellationToken.None);
+
+        Assert.True(cancelled);
+        var run = (await store.GetRunsAsync(CancellationToken.None)).Single();
+        Assert.Equal("failed", run.Status);
+        Assert.Equal("Run was cancelled.", run.ErrorMessage);
+    }
 }

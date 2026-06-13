@@ -20,7 +20,7 @@ public static class DurableStackWorkerHost
 
     public static IHostApplicationBuilder AddDurableStackSqlite(
         this IHostApplicationBuilder builder,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
         builder.Services.AddDurableStackSqlite(connectionString, configure);
@@ -38,7 +38,7 @@ public static class DurableStackWorkerHost
 
     public static IHostApplicationBuilder AddDurableStackSqlServer(
         this IHostApplicationBuilder builder,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
         builder.Services.AddDurableStackSqlServer(connectionString, configure);
@@ -56,7 +56,7 @@ public static class DurableStackWorkerHost
 
     public static IHostApplicationBuilder AddDurableStackMySql(
         this IHostApplicationBuilder builder,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
         builder.Services.AddDurableStackMySql(connectionString, configure);
@@ -74,7 +74,7 @@ public static class DurableStackWorkerHost
 
     public static IHostApplicationBuilder AddDurableStackPostgres(
         this IHostApplicationBuilder builder,
-        string connectionString,
+        string? connectionString = null,
         Action<DurableStackOptions>? configure = null)
     {
         builder.Services.AddDurableStackPostgres(connectionString, configure);

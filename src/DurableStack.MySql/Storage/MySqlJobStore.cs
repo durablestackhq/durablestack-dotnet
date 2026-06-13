@@ -89,6 +89,63 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runId;
     }
 
+    public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
+        string jobName,
+        string jobType,
+        string? payloadJson,
+        DateTimeOffset scheduledForUtc,
+        int maxAttempts,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.NewGuid();
+
+        var sql = $"""
+            insert into {_runsTable} (
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                attempt,
+                max_attempts,
+                created_at_utc,
+                updated_at_utc)
+            select
+                @id,
+                @job_name,
+                @job_type,
+                'pending',
+                @payload_json,
+                @scheduled_for_utc,
+                null,
+                0,
+                @max_attempts,
+                UTC_TIMESTAMP(6),
+                UTC_TIMESTAMP(6)
+            where not exists (
+                select 1
+                from {_runsTable}
+                where job_name = @job_name
+                  and status in ('pending', 'leased'));
+            """;
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", runId.ToString());
+        command.Parameters.AddWithValue("@job_name", jobName);
+        command.Parameters.AddWithValue("@job_type", jobType);
+        command.Parameters.AddWithValue("@payload_json", (object?)payloadJson ?? DBNull.Value);
+        command.Parameters.AddWithValue("@scheduled_for_utc", scheduledForUtc.UtcDateTime);
+        command.Parameters.AddWithValue("@max_attempts", maxAttempts);
+
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+
+        return affected > 0 ? runId : null;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -228,6 +285,30 @@ public sealed class MySqlJobStore : IDurableJobStore
             sql,
             cancellationToken,
             new MySqlParameter("@id", runId.ToString()));
+    }
+
+    public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runsTable}
+            set
+                status = 'failed',
+                completed_at_utc = UTC_TIMESTAMP(6),
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                updated_at_utc = UTC_TIMESTAMP(6)
+            where id = @id
+              and status in ('pending', 'leased');
+            """;
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", runId.ToString());
+        command.Parameters.AddWithValue("@error_message", "Run was cancelled.");
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task MarkFailedAsync(
@@ -459,7 +540,10 @@ public sealed class MySqlJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where schedule_type = 'cron'
@@ -485,7 +569,10 @@ public sealed class MySqlJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                AllowConcurrentRuns = reader.GetBoolean(reader.GetOrdinal("allow_concurrent_runs")),
                 NextRunAtUtc = AsOptionalUtcDateTimeOffset(reader, "next_run_at_utc") ?? DateTimeOffset.MinValue,
             });
         }
@@ -590,6 +677,9 @@ public sealed class MySqlJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 enabled,
+                allow_concurrent_runs,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 max_attempts,
                 next_run_at_utc,
                 created_at_utc,
@@ -602,6 +692,9 @@ public sealed class MySqlJobStore : IDurableJobStore
                 @cron_expression,
                 @time_zone,
                 1,
+                @allow_concurrent_runs,
+                @retry_behavior,
+                @retry_initial_delay_seconds,
                 @max_attempts,
                 @next_run_at_utc,
                 UTC_TIMESTAMP(6),
@@ -612,6 +705,9 @@ public sealed class MySqlJobStore : IDurableJobStore
                 cron_expression = values(cron_expression),
                 time_zone = values(time_zone),
                 enabled = 1,
+                allow_concurrent_runs = values(allow_concurrent_runs),
+                retry_behavior = values(retry_behavior),
+                retry_initial_delay_seconds = values(retry_initial_delay_seconds),
                 max_attempts = values(max_attempts),
                 next_run_at_utc = values(next_run_at_utc),
                 updated_at_utc = UTC_TIMESTAMP(6);
@@ -625,6 +721,9 @@ public sealed class MySqlJobStore : IDurableJobStore
             new MySqlParameter("@job_type", registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name),
             new MySqlParameter("@cron_expression", registration.CronExpression),
             new MySqlParameter("@time_zone", registration.TimeZone),
+            new MySqlParameter("@allow_concurrent_runs", registration.AllowConcurrentRuns),
+            new MySqlParameter("@retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
+            new MySqlParameter("@retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),
             new MySqlParameter("@max_attempts", registration.MaxAttempts),
             new MySqlParameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
@@ -642,7 +741,10 @@ public sealed class MySqlJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where enabled = 1
@@ -670,7 +772,10 @@ public sealed class MySqlJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                AllowConcurrentRuns = reader.GetBoolean(reader.GetOrdinal("allow_concurrent_runs")),
                 NextRunAtUtc = AsUtcDateTimeOffset(reader, "next_run_at_utc"),
             });
         }
@@ -719,7 +824,14 @@ public sealed class MySqlJobStore : IDurableJobStore
             where name = @name
               and enabled = 1
               and schedule_type = 'cron'
-              and next_run_at_utc = @expected_next_run_at_utc;
+              and next_run_at_utc = @expected_next_run_at_utc
+              and (
+                  allow_concurrent_runs = 1
+                  or not exists (
+                      select 1
+                      from {_runsTable} active
+                      where active.job_name = @name
+                        and active.status in ('pending', 'leased')));
             """;
 
         await using (var update = new MySqlCommand(updateSql, connection, transaction))
@@ -881,6 +993,44 @@ public sealed class MySqlJobStore : IDurableJobStore
         return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
     }
 
+    private static int? AsOptionalInt32(MySqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetInt32(ordinal);
+    }
+
+    private static Core.Models.RetryBehavior? ParseRetryBehavior(MySqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetString(ordinal);
+        return value switch
+        {
+            "fixed_delay" => Core.Models.RetryBehavior.FixedDelay,
+            "backoff" => Core.Models.RetryBehavior.Backoff,
+            _ => null,
+        };
+    }
+
+    private static string? ToRetryBehaviorValue(Core.Models.RetryBehavior? retryBehavior)
+    {
+        return retryBehavior switch
+        {
+            Core.Models.RetryBehavior.FixedDelay => "fixed_delay",
+            Core.Models.RetryBehavior.Backoff => "backoff",
+            _ => null,
+        };
+    }
+
     private static int TryGetOrdinal(MySqlDataReader reader, string column)
     {
         for (var i = 0; i < reader.FieldCount; i++)
@@ -906,9 +1056,11 @@ public sealed class MySqlJobStore : IDurableJobStore
         sb.AppendLine("    cron_expression varchar(128) null,");
         sb.AppendLine("    time_zone varchar(128) null,");
         sb.AppendLine("    enabled tinyint(1) not null default 1,");
+        sb.AppendLine("    allow_concurrent_runs tinyint(1) not null default 0,");
+        sb.AppendLine("    retry_behavior varchar(32) null,");
+        sb.AppendLine("    retry_initial_delay_seconds int null,");
         sb.AppendLine("    payload_json longtext null,");
         sb.AppendLine("    max_attempts int not null default 3,");
-        sb.AppendLine("    retry_backoff_seconds int not null default 60,");
         sb.AppendLine("    next_run_at_utc datetime(6) null,");
         sb.AppendLine("    last_run_at_utc datetime(6) null,");
         sb.AppendLine("    created_at_utc datetime(6) not null default utc_timestamp(6),");
@@ -916,6 +1068,10 @@ public sealed class MySqlJobStore : IDurableJobStore
         sb.AppendLine(");");
 
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_jobsTableName}_due")} on {_jobsTable} (enabled, schedule_type, next_run_at_utc);");
+        sb.AppendLine($"alter table {_jobsTable} add column if not exists allow_concurrent_runs tinyint(1) not null default 0;");
+        sb.AppendLine($"alter table {_jobsTable} add column if not exists retry_behavior varchar(32) null;");
+        sb.AppendLine($"alter table {_jobsTable} add column if not exists retry_initial_delay_seconds int null;");
+        sb.AppendLine($"alter table {_jobsTable} drop column if exists retry_backoff_seconds;");
 
         sb.AppendLine($"create table if not exists {_runsTable} (");
         sb.AppendLine("    id char(36) primary key,");

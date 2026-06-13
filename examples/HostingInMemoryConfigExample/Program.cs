@@ -5,15 +5,9 @@ var builder = WebApplication.CreateBuilder(args);
 var workerName = $"{Environment.GetEnvironmentVariable("HOSTNAME") ?? Environment.MachineName}-{Environment.ProcessId}";
 var runStatuses = new[] { "pending", "leased", "succeeded", "failed" };
 
-builder.Configuration
-    .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"), optional: true, reloadOnChange: false)
-    .AddJsonFile(
-        Path.Combine(AppContext.BaseDirectory, $"appsettings.{builder.Environment.EnvironmentName}.json"),
-        optional: true,
-        reloadOnChange: false);
-
-// Required: register DurableStack + hosted background processing using MySQL storage.
-builder.Services.AddDurableStackMySql(builder.Configuration, options =>
+// Required: register DurableStack. This overload will pick up appsettings
+// via registered IConfiguration when available, then apply explicit overrides.
+builder.Services.AddDurableStack(options =>
 {
     options.WorkerName = workerName;
 });
@@ -26,15 +20,9 @@ builder.Logging.AddSimpleConsole();
 
 var app = builder.Build();
 
-app.Logger.LogInformation("DurableStack example started. Provider=MySql WorkerName={WorkerName}", workerName);
+app.Logger.LogInformation("DurableStack config example started. Provider=InMemory WorkerName={WorkerName}", workerName);
 
-app.MapGet("/", () => "DurableStack Hosting MySQL Example");
-
-app.MapPost("/migrate", async (IDurableStackStoreMigrator migrator, CancellationToken cancellationToken) =>
-{
-    await migrator.MigrateAsync(cancellationToken);
-    return Results.Ok(new { migrated = true });
-});
+app.MapGet("/", () => "DurableStack Hosting InMemory Config Example");
 
 app.MapPost("/enqueue", async (IDurableStackClient jobs, string email, CancellationToken cancellationToken) =>
 {

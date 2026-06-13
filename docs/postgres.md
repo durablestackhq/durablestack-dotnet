@@ -4,15 +4,15 @@ DurableStack supports PostgreSQL as an opt-in durable storage backend.
 
 ## Configuration
 
-Use `ConnectionStrings:DurableStack` and set provider mode under `DurableStack`.
+Set provider mode under `DurableStack` and provide `DurableStack:Postgres:ConnectionString`.
 
 ```json
 {
-  "ConnectionStrings": {
-    "DurableStack": "Host=localhost;Port=5432;Database=durable_stack;Username=postgres;Password=postgres"
-  },
   "DurableStack": {
     "StorageProvider": "Postgres",
+    "Postgres": {
+      "ConnectionString": "Host=localhost;Port=5432;Database=durable_stack;Username=postgres;Password=postgres"
+    },
     "DatabaseTablePrefix": "Acme_",
     "PollIntervalSeconds": 0.5,
     "BatchSize": 25,

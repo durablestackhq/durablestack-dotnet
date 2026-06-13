@@ -45,7 +45,7 @@ public sealed class DurableStackProcessorTests
 
         await store.EnqueueAsync("no-args", typeof(TestNoArgsJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
 
-        var processor = new DurableStackProcessor(store, runner, scheduler, options, new[] { events }, eventFactory);
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         var processed = await processor.ProcessOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, processed);
@@ -99,7 +99,7 @@ public sealed class DurableStackProcessorTests
 
         await store.EnqueueAsync("always-fail", typeof(AlwaysFailJob).Name, null, DateTimeOffset.UtcNow, 2, CancellationToken.None);
 
-        var processor = new DurableStackProcessor(store, runner, scheduler, options, new[] { events }, eventFactory);
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         await processor.ProcessOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, AlwaysFailJob.ExecutionCount);
@@ -150,7 +150,7 @@ public sealed class DurableStackProcessorTests
 
         await store.EnqueueAsync("always-fail", typeof(AlwaysFailJob).Name, null, DateTimeOffset.UtcNow, 1, CancellationToken.None);
 
-        var processor = new DurableStackProcessor(store, runner, scheduler, options, new[] { events }, eventFactory);
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         await processor.ProcessOnceAsync(CancellationToken.None);
 
         var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
@@ -201,7 +201,7 @@ public sealed class DurableStackProcessorTests
 
         await Task.Delay(20);
 
-        var processor = new DurableStackProcessor(store, runner, scheduler, options, new[] { events }, eventFactory);
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         var processed = await processor.ProcessOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, processed);
@@ -250,7 +250,7 @@ public sealed class DurableStackProcessorTests
             3,
             CancellationToken.None);
 
-        var processor = new DurableStackProcessor(store, runner, scheduler, options, new[] { events }, eventFactory);
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
 
         var processingTask = processor.ProcessOnceAsync(CancellationToken.None);
         await Task.Delay(500);
@@ -308,8 +308,8 @@ public sealed class DurableStackProcessorTests
 
         await store.EnqueueAsync("atomic-counter", typeof(AtomicCounterJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
 
-        var processorA = new DurableStackProcessor(store, runnerA, scheduler, optionsA, new[] { events }, eventFactoryA);
-        var processorB = new DurableStackProcessor(store, runnerB, scheduler, optionsB, new[] { events }, eventFactoryB);
+        var processorA = new DurableStackProcessor(store, registry, runnerA, scheduler, optionsA, new[] { events }, eventFactoryA);
+        var processorB = new DurableStackProcessor(store, registry, runnerB, scheduler, optionsB, new[] { events }, eventFactoryB);
 
         var processed = await Task.WhenAll(
             processorA.ProcessOnceAsync(CancellationToken.None),
@@ -321,6 +321,57 @@ public sealed class DurableStackProcessorTests
         var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
         Assert.Equal("succeeded", run.Status);
         Assert.Equal(1, run.Attempt);
+    }
+
+    [Fact]
+    public async Task ProcessOnceAsync_uses_backoff_retry_policy_with_job_initial_delay()
+    {
+        AlwaysFailJob.ExecutionCount = 0;
+
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "always-fail",
+                JobType = typeof(AlwaysFailJob),
+                MaxAttempts = 4,
+                RetryBehavior = RetryBehavior.Backoff,
+                RetryInitialDelaySeconds = 1,
+            },
+        });
+
+        var options = new DurableStackOptions
+        {
+            WorkerName = "test-worker",
+            BatchSize = 10,
+            LeaseDuration = TimeSpan.FromSeconds(10),
+            RetryDelay = TimeSpan.FromMilliseconds(50),
+        };
+
+        using var provider = BuildServiceProvider(new AlwaysFailJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
+        var events = new RecordingEventSink();
+        var eventFactory = BuildEventFactory(options);
+        var scheduler = new NoOpRecurringJobScheduler();
+
+        await store.EnqueueAsync("always-fail", typeof(AlwaysFailJob).Name, null, DateTimeOffset.UtcNow, 4, CancellationToken.None);
+
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
+        var beforeFirst = DateTimeOffset.UtcNow;
+        await processor.ProcessOnceAsync(CancellationToken.None);
+        var firstRetryAt = (await store.GetRunsAsync(CancellationToken.None)).Single().ScheduledForUtc;
+
+        await Task.Delay(1200);
+        var beforeSecond = DateTimeOffset.UtcNow;
+        await processor.ProcessOnceAsync(CancellationToken.None);
+        var secondRetryAt = (await store.GetRunsAsync(CancellationToken.None)).Single().ScheduledForUtc;
+
+        var firstDelay = firstRetryAt - beforeFirst;
+        var secondDelay = secondRetryAt - beforeSecond;
+
+        Assert.True(firstDelay.TotalSeconds >= 0.8);
+        Assert.True(secondDelay.TotalSeconds >= 1.8);
     }
 
     private static DurableStackEventFactory BuildEventFactory(DurableStackOptions options)

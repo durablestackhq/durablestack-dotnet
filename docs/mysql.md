@@ -4,15 +4,15 @@ DurableStack supports MySQL as an opt-in durable storage backend.
 
 ## Configuration
 
-Use `ConnectionStrings:DurableStack` and set provider mode under `DurableStack`.
+Set provider mode under `DurableStack` and provide `DurableStack:MySql:ConnectionString`.
 
 ```json
 {
-  "ConnectionStrings": {
-    "DurableStack": "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;SslMode=Preferred"
-  },
   "DurableStack": {
     "StorageProvider": "MySql",
+    "MySql": {
+      "ConnectionString": "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;SslMode=Preferred"
+    },
     "DatabaseTablePrefix": "Acme_",
     "PollIntervalSeconds": 0.5,
     "BatchSize": 25,

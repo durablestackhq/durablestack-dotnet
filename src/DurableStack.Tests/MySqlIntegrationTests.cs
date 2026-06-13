@@ -192,6 +192,7 @@ public sealed class MySqlIntegrationTests
             TimeZone = registration.TimeZone,
             MaxAttempts = registration.MaxAttempts,
             Enabled = true,
+            AllowConcurrentRuns = registration.AllowConcurrentRuns,
             NextRunAtUtc = dueAt,
         };
 

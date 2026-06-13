@@ -89,6 +89,66 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runId;
     }
 
+    public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
+        string jobName,
+        string jobType,
+        string? payloadJson,
+        DateTimeOffset scheduledForUtc,
+        int maxAttempts,
+        CancellationToken cancellationToken)
+    {
+        var runId = Guid.NewGuid();
+
+        var sql = $"""
+            insert into {_runsTable} (
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                attempt,
+                max_attempts,
+                created_at_utc,
+                updated_at_utc)
+            select
+                @id,
+                @job_name,
+                @job_type,
+                N'pending',
+                @payload_json,
+                @scheduled_for_utc,
+                null,
+                0,
+                @max_attempts,
+                SYSUTCDATETIME(),
+                SYSUTCDATETIME()
+            where not exists (
+                select 1
+                from {_runsTable}
+                where job_name = @job_name
+                  and status in (N'pending', N'leased'));
+            """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddRange(
+        [
+            new SqlParameter("@id", runId),
+            new SqlParameter("@job_name", jobName),
+            new SqlParameter("@job_type", jobType),
+            new SqlParameter("@payload_json", (object?)payloadJson ?? DBNull.Value),
+            new SqlParameter("@scheduled_for_utc", scheduledForUtc.UtcDateTime),
+            new SqlParameter("@max_attempts", maxAttempts),
+        ]);
+
+        var affected = await command.ExecuteNonQueryAsync(cancellationToken);
+
+        return affected > 0 ? runId : null;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -173,6 +233,30 @@ public sealed class SqlServerJobStore : IDurableJobStore
             """;
 
         await ExecuteNonQueryAsync(sql, cancellationToken, new SqlParameter("@id", runId));
+    }
+
+    public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runsTable}
+            set
+                status = N'failed',
+                completed_at_utc = SYSUTCDATETIME(),
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                updated_at_utc = SYSUTCDATETIME()
+            where id = @id
+              and status in (N'pending', N'leased');
+            """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", runId);
+        command.Parameters.AddWithValue("@error_message", "Run was cancelled.");
+
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
     public async Task MarkFailedAsync(
@@ -403,7 +487,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where schedule_type = N'cron'
@@ -429,7 +516,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                AllowConcurrentRuns = reader.GetBoolean(reader.GetOrdinal("allow_concurrent_runs")),
                 NextRunAtUtc = AsOptionalUtcDateTimeOffset(reader, "next_run_at_utc") ?? DateTimeOffset.MinValue,
             });
         }
@@ -539,6 +629,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 cron_expression = @cron_expression,
                 time_zone = @time_zone,
                 enabled = 1,
+                allow_concurrent_runs = @allow_concurrent_runs,
+                retry_behavior = @retry_behavior,
+                retry_initial_delay_seconds = @retry_initial_delay_seconds,
                 max_attempts = @max_attempts,
                 next_run_at_utc = @next_run_at_utc,
                 updated_at_utc = SYSUTCDATETIME()
@@ -554,6 +647,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
                     cron_expression,
                     time_zone,
                     enabled,
+                    allow_concurrent_runs,
+                    retry_behavior,
+                    retry_initial_delay_seconds,
                     max_attempts,
                     next_run_at_utc,
                     created_at_utc,
@@ -566,6 +662,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
                     @cron_expression,
                     @time_zone,
                     1,
+                    @allow_concurrent_runs,
+                    @retry_behavior,
+                    @retry_initial_delay_seconds,
                     @max_attempts,
                     @next_run_at_utc,
                     SYSUTCDATETIME(),
@@ -581,6 +680,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
             new SqlParameter("@job_type", registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name),
             new SqlParameter("@cron_expression", registration.CronExpression),
             new SqlParameter("@time_zone", registration.TimeZone),
+            new SqlParameter("@allow_concurrent_runs", registration.AllowConcurrentRuns),
+            new SqlParameter("@retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
+            new SqlParameter("@retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),
             new SqlParameter("@max_attempts", registration.MaxAttempts),
             new SqlParameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
@@ -597,7 +699,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 cron_expression,
                 time_zone,
                 max_attempts,
+                retry_behavior,
+                retry_initial_delay_seconds,
                 enabled,
+                allow_concurrent_runs,
                 next_run_at_utc
             from {_jobsTable}
             where enabled = 1
@@ -625,7 +730,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 CronExpression = reader.GetString(reader.GetOrdinal("cron_expression")),
                 TimeZone = reader.GetString(reader.GetOrdinal("time_zone")),
                 MaxAttempts = reader.GetInt32(reader.GetOrdinal("max_attempts")),
+                RetryBehavior = ParseRetryBehavior(reader, "retry_behavior"),
+                RetryInitialDelaySeconds = AsOptionalInt32(reader, "retry_initial_delay_seconds"),
                 Enabled = reader.GetBoolean(reader.GetOrdinal("enabled")),
+                AllowConcurrentRuns = reader.GetBoolean(reader.GetOrdinal("allow_concurrent_runs")),
                 NextRunAtUtc = AsUtcDateTimeOffset(reader, "next_run_at_utc"),
             });
         }
@@ -674,8 +782,15 @@ public sealed class SqlServerJobStore : IDurableJobStore
             where name = @name
               and enabled = 1
               and schedule_type = N'cron'
-              and next_run_at_utc = @expected_next_run_at_utc;
-
+              and next_run_at_utc = @expected_next_run_at_utc
+              and (
+                  allow_concurrent_runs = 1
+                  or not exists (
+                      select 1
+                      from {_runsTable} active
+                      where active.job_name = @name
+                        and active.status in (N'pending', N'leased')));
+            
             insert into {_runsTable} (
                 id,
                 job_name,
@@ -826,6 +941,44 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc));
     }
 
+    private static int? AsOptionalInt32(SqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        return reader.GetInt32(ordinal);
+    }
+
+    private static Core.Models.RetryBehavior? ParseRetryBehavior(SqlDataReader reader, string column)
+    {
+        var ordinal = TryGetOrdinal(reader, column);
+        if (ordinal < 0 || reader.IsDBNull(ordinal))
+        {
+            return null;
+        }
+
+        var value = reader.GetString(ordinal);
+        return value switch
+        {
+            "fixed_delay" => Core.Models.RetryBehavior.FixedDelay,
+            "backoff" => Core.Models.RetryBehavior.Backoff,
+            _ => null,
+        };
+    }
+
+    private static string? ToRetryBehaviorValue(Core.Models.RetryBehavior? retryBehavior)
+    {
+        return retryBehavior switch
+        {
+            Core.Models.RetryBehavior.FixedDelay => "fixed_delay",
+            Core.Models.RetryBehavior.Backoff => "backoff",
+            _ => null,
+        };
+    }
+
     private static int TryGetOrdinal(SqlDataReader reader, string column)
     {
         for (var i = 0; i < reader.FieldCount; i++)
@@ -863,9 +1016,11 @@ public sealed class SqlServerJobStore : IDurableJobStore
                     cron_expression nvarchar(128) null,
                     time_zone nvarchar(128) null,
                     enabled bit not null constraint DF_{_jobsTableName}_enabled default 1,
+                    allow_concurrent_runs bit not null constraint DF_{_jobsTableName}_allow_concurrent_runs default 0,
+                    retry_behavior nvarchar(32) null,
+                    retry_initial_delay_seconds int null,
                     payload_json nvarchar(max) null,
                     max_attempts int not null constraint DF_{_jobsTableName}_max_attempts default 3,
-                    retry_backoff_seconds int not null constraint DF_{_jobsTableName}_retry_backoff_seconds default 60,
                     next_run_at_utc datetime2(7) null,
                     last_run_at_utc datetime2(7) null,
                     created_at_utc datetime2(7) not null constraint DF_{_jobsTableName}_created_at_utc default SYSUTCDATETIME(),
@@ -876,6 +1031,38 @@ public sealed class SqlServerJobStore : IDurableJobStore
             if not exists (select 1 from sys.indexes where name = N'{jobsDueIndexName}' and object_id = object_id(N'{jobsObject}'))
             begin
                 create index [{jobsDueIndexName}] on {_jobsTable} (enabled, schedule_type, next_run_at_utc);
+            end;
+
+            if col_length(N'{jobsObject}', N'allow_concurrent_runs') is null
+            begin
+                alter table {_jobsTable} add allow_concurrent_runs bit not null constraint DF_{_jobsTableName}_allow_concurrent_runs_legacy default 0;
+            end;
+
+            if col_length(N'{jobsObject}', N'retry_behavior') is null
+            begin
+                alter table {_jobsTable} add retry_behavior nvarchar(32) null;
+            end;
+
+            if col_length(N'{jobsObject}', N'retry_initial_delay_seconds') is null
+            begin
+                alter table {_jobsTable} add retry_initial_delay_seconds int null;
+            end;
+
+            if col_length(N'{jobsObject}', N'retry_backoff_seconds') is not null
+            begin
+                declare @retryBackoffConstraint sysname;
+                select @retryBackoffConstraint = dc.name
+                from sys.default_constraints dc
+                inner join sys.columns c on c.default_object_id = dc.object_id
+                where dc.parent_object_id = object_id(N'{jobsObject}')
+                  and c.name = N'retry_backoff_seconds';
+
+                if @retryBackoffConstraint is not null
+                begin
+                    exec(N'alter table {_jobsTable} drop constraint [' + @retryBackoffConstraint + N']');
+                end;
+
+                alter table {_jobsTable} drop column retry_backoff_seconds;
             end;
 
             if object_id(N'{runsObject}', N'U') is null
