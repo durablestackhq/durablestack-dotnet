@@ -4,15 +4,15 @@ DurableStack supports SQL Server as an opt-in durable storage backend.
 
 ## Configuration
 
-Use `ConnectionStrings:DurableStack` and set provider mode under `DurableStack`.
+Set provider mode under `DurableStack` and provide `DurableStack:SqlServer:ConnectionString`.
 
 ```json
 {
-  "ConnectionStrings": {
-    "DurableStack": "Server=localhost;Database=durable_stack;User Id=sa;Password=Password123!;TrustServerCertificate=true"
-  },
   "DurableStack": {
     "StorageProvider": "SqlServer",
+    "SqlServer": {
+      "ConnectionString": "Server=localhost;Database=durable_stack;User Id=sa;Password=Password123!;TrustServerCertificate=true"
+    },
     "DatabaseTablePrefix": "Acme_",
     "PollIntervalSeconds": 0.5,
     "BatchSize": 25,

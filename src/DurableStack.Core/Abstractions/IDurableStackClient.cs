@@ -12,4 +12,6 @@ public interface IDurableStackClient
         object? payload,
         DateTimeOffset runAtUtc,
         CancellationToken cancellationToken = default);
+
+    Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken = default);
 }

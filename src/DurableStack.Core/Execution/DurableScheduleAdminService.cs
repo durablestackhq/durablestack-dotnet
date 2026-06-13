@@ -57,13 +57,30 @@ public sealed class DurableScheduleAdminService : IDurableScheduleAdminService
             return null;
         }
 
-        var runId = await _store.EnqueueAsync(
+        var jobType = registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name;
+        if (registration.AllowConcurrentRuns)
+        {
+            return await _store.EnqueueAsync(
+                registration.JobName,
+                jobType,
+                payloadJson: null,
+                DateTimeOffset.UtcNow,
+                registration.MaxAttempts,
+                cancellationToken);
+        }
+
+        var runId = await _store.TryEnqueueIfNoActiveRunAsync(
             registration.JobName,
-            registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name,
+            jobType,
             payloadJson: null,
             DateTimeOffset.UtcNow,
             registration.MaxAttempts,
             cancellationToken);
+
+        if (!runId.HasValue)
+        {
+            throw new ScheduledJobRunBlockedException(jobName);
+        }
 
         return runId;
     }

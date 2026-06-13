@@ -13,4 +13,6 @@ public sealed class RecurringJobAttribute : Attribute
     public string Cron { get; }
 
     public string TimeZone { get; init; } = "UTC";
+
+    public bool AllowConcurrentRuns { get; init; }
 }

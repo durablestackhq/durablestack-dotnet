@@ -1,4 +1,5 @@
 using System;
+using DurableStack.Core.Models;
 
 namespace DurableStack.Hosting.DependencyInjection;
 
@@ -8,4 +9,8 @@ public sealed class DurableJobAttribute : Attribute
     public string? Name { get; init; }
 
     public int MaxAttempts { get; init; } = 3;
+
+    public RetryBehavior RetryBehavior { get; init; } = RetryBehavior.FixedDelay;
+
+    public int RetryInitialDelaySeconds { get; init; }
 }

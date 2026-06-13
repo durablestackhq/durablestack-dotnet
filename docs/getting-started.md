@@ -123,17 +123,7 @@ builder.Services.AddDurableStack(builder.Configuration, options =>
 });
 ```
 
-In this mode, `DurableStack:StorageProvider` selects the backing store and provider-specific connection options are read from configuration.
-
-If your host app uses a non-default connection string name, set `ConnectionStringName`:
-
-```csharp
-builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
-{
-    options.WorkerName = workerName;
-    options.ConnectionStringName = "acmewidgets_prod";
-});
-```
+In this mode, `DurableStack:StorageProvider` selects the backing store and provider-specific connection options are read from the `DurableStack` section.
 
 Optional worker tuning can be set in configuration:
 
@@ -234,7 +224,8 @@ Configuration example (`appsettings.json` or `appsettings.Development.json`):
     "Eventing": {
       "TenantId": "tenant_...",
       "ClientSecret": "secret_...",
-      "IngestionApiBaseUrl": "https://localhost:7163"
+      "IngestionApiBaseUrl": "https://localhost:7163",
+      "IngestionFlushIntervalSeconds": 5
     }
   }
 }
@@ -253,6 +244,8 @@ builder.Services.AddDurableStackPostgres(builder.Configuration, options =>
 ```
 
 If both `TenantId` and `ClientSecret` are set, API ingestion is enabled automatically.
+
+`IngestionFlushIntervalSeconds` controls how frequently telemetry is posted to the API. The default is `5` seconds.
 
 ## Recurring job example
 

@@ -73,7 +73,12 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
-    public void RegisterRecurring<TJob>(string jobName, string cronExpression, string timeZone = "UTC", int maxAttempts = 3)
+    public void RegisterRecurring<TJob>(
+        string jobName,
+        string cronExpression,
+        string timeZone = "UTC",
+        int maxAttempts = 3,
+        bool allowConcurrentRuns = false)
         where TJob : class, IDurableJob
     {
         var registration = new DurableJobRegistration
@@ -84,6 +89,9 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
             MaxAttempts = maxAttempts,
             CronExpression = cronExpression,
             TimeZone = timeZone,
+            AllowConcurrentRuns = allowConcurrentRuns,
+            RetryBehavior = null,
+            RetryInitialDelaySeconds = null,
         };
 
         lock (_gate)
@@ -92,7 +100,12 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
-    public void RegisterRecurring<TJob, TArgs>(string jobName, string cronExpression, string timeZone = "UTC", int maxAttempts = 3)
+    public void RegisterRecurring<TJob, TArgs>(
+        string jobName,
+        string cronExpression,
+        string timeZone = "UTC",
+        int maxAttempts = 3,
+        bool allowConcurrentRuns = false)
         where TJob : class, IDurableJob<TArgs>
     {
         var registration = new DurableJobRegistration
@@ -103,6 +116,9 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
             MaxAttempts = maxAttempts,
             CronExpression = cronExpression,
             TimeZone = timeZone,
+            AllowConcurrentRuns = allowConcurrentRuns,
+            RetryBehavior = null,
+            RetryInitialDelaySeconds = null,
         };
 
         lock (_gate)

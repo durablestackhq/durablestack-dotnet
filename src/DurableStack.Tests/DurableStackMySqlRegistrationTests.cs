@@ -24,13 +24,13 @@ public sealed class DurableStackMySqlRegistrationTests
     }
 
     [Fact]
-    public void AddDurableStackMySql_with_configuration_uses_connection_strings_durable_stack()
+    public void AddDurableStackMySql_with_configuration_uses_durable_stack_section_connection_string()
     {
         var services = new ServiceCollection();
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:DurableStack"] = "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;",
+                ["DurableStack:MySql:ConnectionString"] = "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;",
             })
             .Build();
 
@@ -44,25 +44,18 @@ public sealed class DurableStackMySqlRegistrationTests
     }
 
     [Fact]
-    public void AddDurableStackMySql_with_connection_string_name_uses_named_connection_string()
+    public void AddDurableStackMySql_with_options_connection_string_sets_provider_to_mysql()
     {
         var services = new ServiceCollection();
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["ConnectionStrings:acmewidgets_prod"] = "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;",
-            })
-            .Build();
-
-        services.AddDurableStackMySql(configuration, options =>
+        services.AddDurableStackMySql(configure: options =>
         {
-            options.ConnectionStringName = "acmewidgets_prod";
+            options.MySql.ConnectionString = "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;";
         });
 
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<DurableStackOptions>();
 
-        Assert.Equal("acmewidgets_prod", options.ConnectionStringName);
         Assert.Equal("Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=postgres;", options.MySql.ConnectionString);
+        Assert.Equal(DurableStackStorageProvider.MySql, options.StorageProvider);
     }
 }

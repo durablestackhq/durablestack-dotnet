@@ -127,6 +127,7 @@ public sealed class DurableJobActivationScopeTests
         var scheduler = new NoOpRecurringJobScheduler();
         var processor = new DurableStackProcessor(
             store,
+            registry,
             runner,
             scheduler,
             options,

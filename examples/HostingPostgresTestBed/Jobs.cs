@@ -1,5 +1,6 @@
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
+using DurableStack.Core.Models;
 using DurableStack.Hosting.DependencyInjection;
 
 // Optional: pin a stable job name instead of defaulting to the class name.
@@ -31,7 +32,7 @@ public sealed class SendWelcomeEmailArgs
 }
 
 // Optional: pin a stable job name instead of defaulting to the class name.
-[DurableJob(Name = "heartbeat-every-minute")]
+[DurableJob(Name = "send-pending-email")]
 // Optional: make this job recurring; without this attribute it is enqueue-only.
 [RecurringJob("* * * * *", TimeZone = "UTC")]
 public sealed class HeartbeatJob : IDurableJob
@@ -46,6 +47,26 @@ public sealed class HeartbeatJob : IDurableJob
     public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
     {
         _logger.LogInformation("[PostgresTestBed] Recurring heartbeat executed. RunId={RunId}", context.RunId);
+        return Task.CompletedTask;
+    }
+}
+
+// Optional: pin a stable job name instead of defaulting to the class name.
+[DurableJob(Name = "process-payment-batch")]
+// Optional: make this job recurring; without this attribute it is enqueue-only.
+[RecurringJob("*/5 * * * *", TimeZone = "UTC")]
+public sealed class ProcessPaymentBatchJob : IDurableJob
+{
+    private readonly ILogger<ProcessPaymentBatchJob> _logger;
+
+    public ProcessPaymentBatchJob(ILogger<ProcessPaymentBatchJob> logger)
+    {
+        _logger = logger;
+    }
+
+    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("[PostgresTestBed] Recurring payment batch process executed. RunId={RunId}", context.RunId);
         return Task.CompletedTask;
     }
 }
@@ -70,7 +91,7 @@ public sealed class LongRunningLeaseDemoJob : IDurableJob
 }
 
 // Optional: pin a stable job name and default retry count for this job type.
-[DurableJob(Name = "flaky-failure-demo", MaxAttempts = 5)]
+[DurableJob(Name = "third-party-api-sync", MaxAttempts = 5)]
 public sealed class FlakyFailureDemoJob : IDurableJob<FlakyFailureDemoArgs>
 {
     private readonly ILogger<FlakyFailureDemoJob> _logger;
@@ -83,7 +104,7 @@ public sealed class FlakyFailureDemoJob : IDurableJob<FlakyFailureDemoArgs>
     public Task ExecuteAsync(FlakyFailureDemoArgs args, JobContext context, CancellationToken cancellationToken)
     {
         _logger.LogInformation(
-            "[PostgresTestBed] Flaky failure demo executing. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt} FailUntilAttempt={FailUntilAttempt}",
+            "[PostgresTestBed] 3rd party api sync executing. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt} FailUntilAttempt={FailUntilAttempt}",
             args.ScenarioName,
             context.RunId,
             context.Attempt,
@@ -96,7 +117,7 @@ public sealed class FlakyFailureDemoJob : IDurableJob<FlakyFailureDemoArgs>
         }
 
         _logger.LogInformation(
-            "[PostgresTestBed] Flaky failure demo succeeded. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt}",
+            "[PostgresTestBed] 3rd party api sync succeeded. Scenario={ScenarioName} RunId={RunId} Attempt={Attempt}",
             args.ScenarioName,
             context.RunId,
             context.Attempt);

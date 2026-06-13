@@ -16,5 +16,11 @@ public sealed class RecurringJobState
 
     public bool Enabled { get; init; } = true;
 
+    public bool AllowConcurrentRuns { get; init; }
+
+    public RetryBehavior? RetryBehavior { get; init; }
+
+    public int? RetryInitialDelaySeconds { get; init; }
+
     public DateTimeOffset NextRunAtUtc { get; set; }
 }
