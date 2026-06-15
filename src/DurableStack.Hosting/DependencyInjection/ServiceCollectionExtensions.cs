@@ -297,6 +297,7 @@ public static class ServiceCollectionExtensions
             .GetEffectiveSweepInterval()
             .TotalSeconds;
         options.Retention.DeleteBatchSize = options.Retention.GetEffectiveDeleteBatchSize();
+        options.Eventing.MaxErrorDetailLength = options.Eventing.GetEffectiveMaxErrorDetailLength();
 
         if (options.StorageProvider == DurableStackStorageProvider.Postgres && string.IsNullOrWhiteSpace(options.Postgres.ConnectionString))
         {

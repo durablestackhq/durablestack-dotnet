@@ -435,6 +435,89 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select top (@take)
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            order by scheduled_for_utc desc;
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
+        string status,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select top (@take)
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where status = @status
+            order by scheduled_for_utc desc;
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+        command.Parameters.AddWithValue("@status", status);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)

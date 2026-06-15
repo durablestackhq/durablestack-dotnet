@@ -113,7 +113,7 @@ public sealed class DurableStackProcessorTests
         Assert.Contains(events.Events, e => e.EventType == DurableStackEventTypes.RetryScheduled);
         var failedEvent = Assert.Single(events.Events, e => e.EventType == DurableStackEventTypes.JobFailed);
         Assert.NotNull(failedEvent.ErrorType);
-        Assert.NotNull(failedEvent.ErrorDetail);
+        Assert.Null(failedEvent.ErrorDetail);
         Assert.NotNull(failedEvent.RetryAtUtc);
         var retryEvent = Assert.Single(events.Events, e => e.EventType == DurableStackEventTypes.RetryScheduled);
         Assert.NotNull(retryEvent.RetryAtUtc);
@@ -162,7 +162,7 @@ public sealed class DurableStackProcessorTests
         Assert.DoesNotContain(events.Events, e => e.EventType == DurableStackEventTypes.RetryScheduled);
         var failedEvent = Assert.Single(events.Events, e => e.EventType == DurableStackEventTypes.JobFailed);
         Assert.NotNull(failedEvent.ErrorType);
-        Assert.NotNull(failedEvent.ErrorDetail);
+        Assert.Null(failedEvent.ErrorDetail);
         Assert.Null(failedEvent.RetryAtUtc);
     }
 

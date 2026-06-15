@@ -348,6 +348,34 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_reverts_invalid_event_error_detail_limit_to_default()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.Eventing.MaxErrorDetailLength = 0;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(4096, options.Eventing.MaxErrorDetailLength);
+    }
+
+    [Fact]
+    public void AddDurableStack_defaults_event_error_detail_to_disabled()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.False(options.Eventing.IncludeErrorDetail);
+    }
+
+    [Fact]
     public void AddDurableJob_throws_when_job_was_already_discovered()
     {
         var services = new ServiceCollection();

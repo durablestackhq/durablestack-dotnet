@@ -9,7 +9,7 @@ DurableStack provides recurring scheduling, retries, distributed execution, and 
 This repository ships the first .NET beta line (`0.1.*`).
 
 - API may change before `1.0.0`.
-- Schema and runtime behavior may evolve during alpha.
+- Schema and runtime behavior may evolve during beta.
 
 ## What works today
 
@@ -89,11 +89,22 @@ Published package IDs:
 - `docs/timezones.md`
 - `docs/events.md`
 - `docs/job-registration.md`
+- `docs/scheduled-job-management.md`
+- `docs/data-retention.md`
+- `docs/api-stability.md`
+- `docs/releasing.md`
 
 ## Local development
 
 - Build: `dotnet build DurableStack.sln`
 - Test: `dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj`
+
+## CI
+
+DurableStack uses CI for restore/build/test validation on pushes and pull requests.
+
+- Workflow: `.github/workflows/ci.yml`
+- CI does not publish packages to NuGet.
 
 ## Installation guidance
 
@@ -118,3 +129,13 @@ Recommended default for most apps: start with `DurableStack.Hosting`, then move 
 - License: `LICENSE` (MIT)
 - Contribution guide: `CONTRIBUTING.md`
 - Security policy: `SECURITY.md`
+
+## Upcoming changes
+
+Planned hardening items toward `1.0.0`:
+
+- eventing hardening for high-throughput and slow-sink resilience
+- expanded provider integration checks in CI
+- continued docs-site alignment and operational runbook polish
+
+For stability guarantees and release process details, see `docs/api-stability.md` and `docs/releasing.md`.

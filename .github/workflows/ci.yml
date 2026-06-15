@@ -1,13 +1,15 @@
-name: CI
+name: ci
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   pull_request:
 
 jobs:
-  build-test:
+  build-and-test:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -15,7 +17,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: 9.0.x
 
       - name: Restore
         run: dotnet restore DurableStack.sln
@@ -24,14 +26,4 @@ jobs:
         run: dotnet build DurableStack.sln --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build
-
-      - name: Pack preview artifacts
-        run: |
-          dotnet pack ./src/DurableStack.Core/DurableStack.Core.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
-          dotnet pack ./src/DurableStack.Postgres/DurableStack.Postgres.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
-          dotnet pack ./src/DurableStack.MySql/DurableStack.MySql.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
-          dotnet pack ./src/DurableStack.SqlServer/DurableStack.SqlServer.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
-          dotnet pack ./src/DurableStack.Sqlite/DurableStack.Sqlite.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
-          dotnet pack ./src/DurableStack.Hosting/DurableStack.Hosting.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
-          dotnet pack ./src/DurableStack.Worker/DurableStack.Worker.csproj --configuration Release --no-build -o artifacts/packages --include-symbols --include-source
+        run: dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build --verbosity minimal

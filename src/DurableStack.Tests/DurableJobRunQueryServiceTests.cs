@@ -44,4 +44,25 @@ public sealed class DurableJobRunQueryServiceTests
         Assert.Single(enqueuedOnly);
         Assert.Equal("send-email", enqueuedOnly[0].JobName);
     }
+
+    [Fact]
+    public async Task Supports_status_filter_via_store_query()
+    {
+        var store = new InMemoryJobStore();
+        var query = new DurableJobRunQueryService(store);
+
+        var first = await store.EnqueueAsync("job-a", "job-type-a", payloadJson: null, DateTimeOffset.UtcNow, maxAttempts: 3, CancellationToken.None);
+        var second = await store.EnqueueAsync("job-b", "job-type-b", payloadJson: null, DateTimeOffset.UtcNow, maxAttempts: 3, CancellationToken.None);
+
+        await store.MarkSucceededAsync(first, CancellationToken.None);
+        await store.MarkFailedAsync(second, new InvalidOperationException("boom"), retry: false, retryAtUtc: null, CancellationToken.None);
+
+        var succeeded = await query.GetRunsByStatusAsync("succeeded", 10, CancellationToken.None);
+        var failed = await query.GetRunsByStatusAsync("failed", 10, CancellationToken.None);
+
+        Assert.Single(succeeded);
+        Assert.Equal("job-a", succeeded[0].JobName);
+        Assert.Single(failed);
+        Assert.Equal("job-b", failed[0].JobName);
+    }
 }

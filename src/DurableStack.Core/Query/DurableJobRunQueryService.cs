@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using DurableStack.Core.Abstractions;
@@ -24,11 +23,7 @@ public sealed class DurableJobRunQueryService : IDurableJobRunQueryService
 
     public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(int take = 100, CancellationToken cancellationToken = default)
     {
-        var runs = await _store.GetRunsAsync(cancellationToken);
-        return runs
-            .OrderByDescending(x => x.ScheduledForUtc)
-            .Take(Math.Max(1, take))
-            .ToList();
+        return await _store.GetRecentRunsAsync(Math.Max(1, take), cancellationToken);
     }
 
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
@@ -36,12 +31,7 @@ public sealed class DurableJobRunQueryService : IDurableJobRunQueryService
         int take = 100,
         CancellationToken cancellationToken = default)
     {
-        var runs = await _store.GetRunsAsync(cancellationToken);
-        return runs
-            .Where(x => x.Status.Equals(status, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(x => x.ScheduledForUtc)
-            .Take(Math.Max(1, take))
-            .ToList();
+        return await _store.GetRunsByStatusAsync(status, Math.Max(1, take), cancellationToken);
     }
 
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
