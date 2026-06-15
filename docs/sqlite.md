@@ -32,6 +32,8 @@ builder.Services.AddDurableStackSqlite(builder.Configuration, options =>
 
 If these tuning values are omitted, defaults are `PollInterval=5s`, `BatchSize=50`, and `LeaseDuration=30s`.
 
+If your app uses a non-default connection string name, set `options.ConnectionStringName`.
+
 ## Connection string guidance
 
 Common patterns:
@@ -81,6 +83,15 @@ Due work is claimed atomically via transactional select-and-update semantics.
 Leased runs are reclaimed when `lease_until_utc` expires, and long-running jobs extend leases periodically while executing.
 
 For best results, configure unique worker identities per process/container (`DurableStackOptions.WorkerName`) so lease ownership and heartbeat extension stay isolated per instance.
+
+## Query behavior
+
+SQLite provider supports bounded store-side queries for:
+
+- recent runs
+- runs by status
+- runs by job name
+- enqueue-only runs (`schedule_slot_utc is null`)
 
 ## Integration tests
 

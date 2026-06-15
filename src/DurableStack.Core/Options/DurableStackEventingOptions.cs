@@ -5,6 +5,7 @@ namespace DurableStack.Core.Options;
 public sealed class DurableStackEventingOptions
 {
     private static readonly TimeSpan DefaultIngestionFlushInterval = TimeSpan.FromSeconds(5);
+    private const int DefaultMaxErrorDetailLength = 4096;
 
     public string? TenantId { get; set; }
 
@@ -30,5 +31,14 @@ public sealed class DurableStackEventingOptions
     {
         get => IngestionFlushInterval.TotalSeconds;
         set => IngestionFlushInterval = value > 0 ? TimeSpan.FromSeconds(value) : DefaultIngestionFlushInterval;
+    }
+
+    public bool IncludeErrorDetail { get; set; } = false;
+
+    public int MaxErrorDetailLength { get; set; } = DefaultMaxErrorDetailLength;
+
+    public int GetEffectiveMaxErrorDetailLength()
+    {
+        return MaxErrorDetailLength > 0 ? MaxErrorDetailLength : DefaultMaxErrorDetailLength;
     }
 }

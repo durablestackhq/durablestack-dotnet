@@ -32,4 +32,6 @@ public interface IDurableJobRegistry
     DurableJobRegistration? FindByJobType(Type jobType);
 
     IReadOnlyList<DurableJobRegistration> GetRecurringJobs();
+
+    IReadOnlyList<DurableJobRegistration> GetAllJobs();
 }

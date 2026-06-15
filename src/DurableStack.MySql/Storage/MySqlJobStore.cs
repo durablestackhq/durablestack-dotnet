@@ -487,6 +487,91 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var limit = Math.Max(1, take);
+        var sql = $"""
+            select
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            order by scheduled_for_utc desc
+            limit {limit};
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
+        string status,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var limit = Math.Max(1, take);
+        var sql = $"""
+            select
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where status = @status
+            order by scheduled_for_utc desc
+            limit {limit};
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@status", status);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -691,7 +776,7 @@ public sealed class MySqlJobStore : IDurableJobStore
                 'cron',
                 @cron_expression,
                 @time_zone,
-                1,
+                @enabled,
                 @allow_concurrent_runs,
                 @retry_behavior,
                 @retry_initial_delay_seconds,
@@ -704,7 +789,7 @@ public sealed class MySqlJobStore : IDurableJobStore
                 schedule_type = 'cron',
                 cron_expression = values(cron_expression),
                 time_zone = values(time_zone),
-                enabled = 1,
+                enabled = values(enabled),
                 allow_concurrent_runs = values(allow_concurrent_runs),
                 retry_behavior = values(retry_behavior),
                 retry_initial_delay_seconds = values(retry_initial_delay_seconds),
@@ -721,6 +806,7 @@ public sealed class MySqlJobStore : IDurableJobStore
             new MySqlParameter("@job_type", registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name),
             new MySqlParameter("@cron_expression", registration.CronExpression),
             new MySqlParameter("@time_zone", registration.TimeZone),
+            new MySqlParameter("@enabled", registration.Enabled),
             new MySqlParameter("@allow_concurrent_runs", registration.AllowConcurrentRuns),
             new MySqlParameter("@retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
             new MySqlParameter("@retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),

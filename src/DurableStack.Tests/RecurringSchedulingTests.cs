@@ -27,7 +27,7 @@ public sealed class RecurringSchedulingTests
             },
         });
 
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, options);
         await initializer.InitializeAsync(CancellationToken.None);
 
         // Force job due now for deterministic test.
@@ -64,7 +64,7 @@ public sealed class RecurringSchedulingTests
             },
         });
 
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, options);
         await initializer.InitializeAsync(CancellationToken.None);
         await store.UpdateRecurringNextRunAsync("every-minute-job", DateTimeOffset.UtcNow.AddSeconds(-1), CancellationToken.None);
 
@@ -105,7 +105,7 @@ public sealed class RecurringSchedulingTests
             },
         });
 
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, options);
         await initializer.InitializeAsync(CancellationToken.None);
 
         var pastDue = DateTimeOffset.UtcNow.AddMinutes(-10);
@@ -144,7 +144,7 @@ public sealed class RecurringSchedulingTests
             },
         });
 
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, options);
         await initializer.InitializeAsync(CancellationToken.None);
 
         var pastDue = DateTimeOffset.UtcNow.AddMinutes(-10);
@@ -176,7 +176,7 @@ public sealed class RecurringSchedulingTests
             },
         });
 
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, options);
         await initializer.InitializeAsync(CancellationToken.None);
         await store.UpdateRecurringNextRunAsync("every-minute-job", DateTimeOffset.UtcNow.AddSeconds(-1), CancellationToken.None);
 
@@ -215,7 +215,7 @@ public sealed class RecurringSchedulingTests
             },
         });
 
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, options);
         await initializer.InitializeAsync(CancellationToken.None);
         await store.UpdateRecurringNextRunAsync("every-minute-job", DateTimeOffset.UtcNow.AddMinutes(-10), CancellationToken.None);
 
@@ -229,4 +229,184 @@ public sealed class RecurringSchedulingTests
         var runs = await store.GetRunsByJobNameAsync("every-minute-job", 10, CancellationToken.None);
         Assert.Equal(2, runs.Count);
     }
+
+    [Fact]
+    public async Task Initializer_keep_database_behavior_preserves_existing_schedule()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions
+        {
+            Recurring =
+            {
+                RegistrationSync =
+                {
+                    ExistingJobBehavior = ExistingRecurringJobBehavior.KeepDatabase,
+                },
+            },
+        };
+
+        var existingRegistration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        await store.UpsertRecurringJobAsync(existingRegistration, DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+        _ = await store.SetRecurringJobEnabledAsync("heartbeat", enabled: false, nextRunAtUtc: null, CancellationToken.None);
+
+        var updatedCodeRegistration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 5,
+            CronExpression = "*/5 * * * *",
+            TimeZone = "America/Chicago",
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { updatedCodeRegistration });
+        await new RecurringJobInitializer(registry, store, options).InitializeAsync(CancellationToken.None);
+
+        var schedule = Assert.Single(await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None));
+        Assert.Equal("* * * * *", schedule.CronExpression);
+        Assert.Equal("UTC", schedule.TimeZone);
+        Assert.False(schedule.Enabled);
+    }
+
+    [Fact]
+    public async Task Initializer_update_from_code_behavior_overwrites_existing_schedule()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions
+        {
+            Recurring =
+            {
+                RegistrationSync =
+                {
+                    ExistingJobBehavior = ExistingRecurringJobBehavior.UpdateFromCode,
+                },
+            },
+        };
+
+        var existingRegistration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        await store.UpsertRecurringJobAsync(existingRegistration, DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
+        var updatedCodeRegistration = new DurableJobRegistration
+        {
+            JobName = "heartbeat",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 5,
+            CronExpression = "*/5 * * * *",
+            TimeZone = "America/Chicago",
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { updatedCodeRegistration });
+        await new RecurringJobInitializer(registry, store, options).InitializeAsync(CancellationToken.None);
+
+        var schedule = Assert.Single(await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None));
+        Assert.Equal("*/5 * * * *", schedule.CronExpression);
+        Assert.Equal("America/Chicago", schedule.TimeZone);
+        Assert.True(schedule.Enabled);
+        Assert.Equal(5, schedule.MaxAttempts);
+    }
+
+    [Fact]
+    public async Task Initializer_disables_orphaned_recurring_jobs_by_default()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions();
+
+        var orphanRegistration = new DurableJobRegistration
+        {
+            JobName = "orphaned-job",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        await store.UpsertRecurringJobAsync(orphanRegistration, DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
+        var registry = new DurableStackJobRegistry(Array.Empty<DurableJobRegistration>());
+        await new RecurringJobInitializer(registry, store, options).InitializeAsync(CancellationToken.None);
+
+        var schedule = Assert.Single(await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None));
+        Assert.False(schedule.Enabled);
+    }
+
+    [Fact]
+    public async Task Initializer_can_ignore_orphaned_recurring_jobs()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions
+        {
+            Recurring =
+            {
+                RegistrationSync =
+                {
+                    OrphanedJobBehavior = OrphanedRecurringJobBehavior.Ignore,
+                },
+            },
+        };
+
+        var orphanRegistration = new DurableJobRegistration
+        {
+            JobName = "orphaned-job",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+        };
+
+        await store.UpsertRecurringJobAsync(orphanRegistration, DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+
+        var registry = new DurableStackJobRegistry(Array.Empty<DurableJobRegistration>());
+        await new RecurringJobInitializer(registry, store, options).InitializeAsync(CancellationToken.None);
+
+        var schedule = Assert.Single(await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None));
+        Assert.True(schedule.Enabled);
+    }
+
+    [Fact]
+    public async Task Initializer_respects_registration_enabled_false_on_first_insert()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions
+        {
+            Recurring =
+            {
+                RegistrationSync =
+                {
+                    ExistingJobBehavior = ExistingRecurringJobBehavior.UpdateFromCode,
+                },
+            },
+        };
+
+        var disabledRegistration = new DurableJobRegistration
+        {
+            JobName = "disabled-job",
+            JobType = typeof(TestNoArgsJob),
+            MaxAttempts = 3,
+            CronExpression = "* * * * *",
+            TimeZone = "UTC",
+            Enabled = false,
+        };
+
+        var registry = new DurableStackJobRegistry(new[] { disabledRegistration });
+        await new RecurringJobInitializer(registry, store, options).InitializeAsync(CancellationToken.None);
+
+        var schedule = Assert.Single(await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None));
+        Assert.False(schedule.Enabled);
+    }
 }
+

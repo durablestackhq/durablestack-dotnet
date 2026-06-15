@@ -435,6 +435,89 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select top (@take)
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            order by scheduled_for_utc desc;
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
+    public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
+        string status,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select top (@take)
+                id,
+                job_name,
+                job_type,
+                status,
+                payload_json,
+                scheduled_for_utc,
+                schedule_slot_utc,
+                started_at_utc,
+                completed_at_utc,
+                attempt,
+                max_attempts,
+                lease_owner,
+                lease_until_utc,
+                error_message
+            from {_runsTable}
+            where status = @status
+            order by scheduled_for_utc desc;
+            """;
+
+        var runs = new List<JobRunRecord>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+        command.Parameters.AddWithValue("@status", status);
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            runs.Add(MapRun(reader));
+        }
+
+        return runs;
+    }
+
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -628,7 +711,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 schedule_type = N'cron',
                 cron_expression = @cron_expression,
                 time_zone = @time_zone,
-                enabled = 1,
+                enabled = @enabled,
                 allow_concurrent_runs = @allow_concurrent_runs,
                 retry_behavior = @retry_behavior,
                 retry_initial_delay_seconds = @retry_initial_delay_seconds,
@@ -661,7 +744,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
                     N'cron',
                     @cron_expression,
                     @time_zone,
-                    1,
+                    @enabled,
                     @allow_concurrent_runs,
                     @retry_behavior,
                     @retry_initial_delay_seconds,
@@ -680,6 +763,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             new SqlParameter("@job_type", registration.JobType.AssemblyQualifiedName ?? registration.JobType.FullName ?? registration.JobType.Name),
             new SqlParameter("@cron_expression", registration.CronExpression),
             new SqlParameter("@time_zone", registration.TimeZone),
+            new SqlParameter("@enabled", registration.Enabled),
             new SqlParameter("@allow_concurrent_runs", registration.AllowConcurrentRuns),
             new SqlParameter("@retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
             new SqlParameter("@retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),
