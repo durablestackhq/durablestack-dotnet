@@ -290,6 +290,16 @@ public static class ServiceCollectionExtensions
             options.JobActivation = DurableStackJobActivationMode.ScopedPerExecution;
         }
 
+        if (!Enum.IsDefined(options.Recurring.RegistrationSync.ExistingJobBehavior))
+        {
+            options.Recurring.RegistrationSync.ExistingJobBehavior = ExistingRecurringJobBehavior.KeepDatabase;
+        }
+
+        if (!Enum.IsDefined(options.Recurring.RegistrationSync.OrphanedJobBehavior))
+        {
+            options.Recurring.RegistrationSync.OrphanedJobBehavior = OrphanedRecurringJobBehavior.Disable;
+        }
+
         options.Retention.RunRetentionSeconds = options.Retention
             .GetEffectiveRunRetention(options.StorageProvider)
             .TotalSeconds;
@@ -297,6 +307,7 @@ public static class ServiceCollectionExtensions
             .GetEffectiveSweepInterval()
             .TotalSeconds;
         options.Retention.DeleteBatchSize = options.Retention.GetEffectiveDeleteBatchSize();
+        options.Eventing.MaxErrorDetailLength = options.Eventing.GetEffectiveMaxErrorDetailLength();
 
         if (options.StorageProvider == DurableStackStorageProvider.Postgres && string.IsNullOrWhiteSpace(options.Postgres.ConnectionString))
         {
@@ -703,6 +714,7 @@ public static class ServiceCollectionExtensions
             CronExpression = cronExpression,
             TimeZone = timeZone,
             AllowConcurrentRuns = recurringAttribute?.AllowConcurrentRuns ?? false,
+            Enabled = recurringAttribute?.Enabled ?? true,
             RetryBehavior = durableAttribute is null ? null : durableAttribute.RetryBehavior,
             RetryInitialDelaySeconds = retryInitialDelaySeconds,
         };

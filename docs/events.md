@@ -89,6 +89,30 @@ builder.Services.UseDurableStackEventSink<MyEventSink>();
 - event publishing is synchronous in the current worker loop path; sinks should avoid long blocking operations
 - event schema additions should bump `EventVersion` and keep backwards compatibility where possible
 
+## Error detail and PII control
+
+DurableStack can include or suppress exception detail in emitted events.
+
+Configuration:
+
+```json
+{
+  "DurableStack": {
+    "Eventing": {
+      "IncludeErrorDetail": false,
+      "MaxErrorDetailLength": 4096
+    }
+  }
+}
+```
+
+Behavior:
+
+- default is `IncludeErrorDetail=false`
+- `IncludeErrorDetail=false` strips `ErrorDetail` from all emitted events
+- `MaxErrorDetailLength` truncates large error details when enabled
+- `ErrorType` and high-level error `Message` still flow for diagnostics
+
 ## OpenTelemetry hooks
 
 DurableStack exposes tracing and metrics via OpenTelemetry.

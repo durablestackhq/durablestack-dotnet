@@ -1,6 +1,7 @@
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Execution;
 using DurableStack.Core.Models;
+using DurableStack.Core.Options;
 
 namespace DurableStack.Tests;
 
@@ -20,7 +21,7 @@ public sealed class DurableScheduleAdminServiceTests
         };
 
         var registry = new DurableStackJobRegistry(new[] { registration });
-        var initializer = new RecurringJobInitializer(registry, store);
+        var initializer = new RecurringJobInitializer(registry, store, new DurableStackOptions());
         await initializer.InitializeAsync(CancellationToken.None);
 
         IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
@@ -71,7 +72,7 @@ public sealed class DurableScheduleAdminServiceTests
         };
 
         var registry = new DurableStackJobRegistry(new[] { registration });
-        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+        await new RecurringJobInitializer(registry, store, new DurableStackOptions()).InitializeAsync(CancellationToken.None);
 
         IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
 
@@ -99,7 +100,7 @@ public sealed class DurableScheduleAdminServiceTests
         };
 
         var registry = new DurableStackJobRegistry(new[] { registration });
-        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+        await new RecurringJobInitializer(registry, store, new DurableStackOptions()).InitializeAsync(CancellationToken.None);
 
         IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
         var before = Assert.Single(await admin.ListScheduledJobsAsync());
@@ -127,7 +128,7 @@ public sealed class DurableScheduleAdminServiceTests
         };
 
         var registry = new DurableStackJobRegistry(new[] { registration });
-        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+        await new RecurringJobInitializer(registry, store, new DurableStackOptions()).InitializeAsync(CancellationToken.None);
 
         IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
 
@@ -154,7 +155,7 @@ public sealed class DurableScheduleAdminServiceTests
         };
 
         var registry = new DurableStackJobRegistry(new[] { registration });
-        await new RecurringJobInitializer(registry, store).InitializeAsync(CancellationToken.None);
+        await new RecurringJobInitializer(registry, store, new DurableStackOptions()).InitializeAsync(CancellationToken.None);
 
         IDurableScheduleAdminService admin = new DurableScheduleAdminService(store, registry);
 
@@ -180,3 +181,4 @@ public sealed class DurableScheduleAdminServiceTests
         Assert.Null(runId);
     }
 }
+

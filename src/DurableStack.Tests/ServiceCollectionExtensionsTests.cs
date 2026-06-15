@@ -163,7 +163,15 @@ public sealed class ServiceCollectionExtensionsTests
             && x.JobName == "discovery-recurring-job"
             && x.MaxAttempts == 5
             && x.CronExpression == "*/5 * * * *"
-            && x.TimeZone == "UTC");
+            && x.TimeZone == "UTC"
+            && x.Enabled);
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryDisabledRecurringJob)
+            && x.JobName == "DiscoveryDisabledRecurringJob"
+            && x.CronExpression == "0 * * * *"
+            && x.TimeZone == "UTC"
+            && !x.Enabled);
 
         Assert.Contains(registrations, x =>
             x.JobType == typeof(DiscoveryArgsJob)
@@ -278,6 +286,19 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_defaults_recurring_registration_sync_behaviors()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(ExistingRecurringJobBehavior.KeepDatabase, options.Recurring.RegistrationSync.ExistingJobBehavior);
+        Assert.Equal(OrphanedRecurringJobBehavior.Disable, options.Recurring.RegistrationSync.OrphanedJobBehavior);
+    }
+
+    [Fact]
     public void AddDurableStack_defaults_worker_name_to_host_or_machine_and_process_id()
     {
         var services = new ServiceCollection();
@@ -345,6 +366,34 @@ public sealed class ServiceCollectionExtensionsTests
         Assert.Equal(3600d, options.Retention.RunRetentionSeconds);
         Assert.Equal(300d, options.Retention.SweepIntervalSeconds);
         Assert.Equal(1000, options.Retention.DeleteBatchSize);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_event_error_detail_limit_to_default()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.Eventing.MaxErrorDetailLength = 0;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(4096, options.Eventing.MaxErrorDetailLength);
+    }
+
+    [Fact]
+    public void AddDurableStack_defaults_event_error_detail_to_disabled()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.False(options.Eventing.IncludeErrorDetail);
     }
 
     [Fact]

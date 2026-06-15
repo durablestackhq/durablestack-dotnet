@@ -76,3 +76,47 @@ If you run without that hosted service, call:
 ```csharp
 await provider.InitializeDurableStackAsync(cancellationToken);
 ```
+
+## Startup registration sync behavior
+
+Recurring schedule reconciliation at worker startup is configurable.
+
+Defaults:
+
+- existing DB schedule records are preserved (`KeepDatabase`)
+- orphaned DB schedules (not present in code) are disabled (`Disable`)
+
+Configuration example:
+
+```json
+{
+  "DurableStack": {
+    "Recurring": {
+      "RegistrationSync": {
+        "ExistingJobBehavior": "KeepDatabase",
+        "OrphanedJobBehavior": "Disable"
+      }
+    }
+  }
+}
+```
+
+You can optionally define a recurring job as disabled at startup:
+
+```csharp
+[RecurringJob("0 * * * *", TimeZone = "UTC", Enabled = false)]
+public sealed class HourlyJob : IDurableJob
+{
+    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+```
+
+`Enabled` defaults to `true` when omitted.
+
+Available values:
+
+- `ExistingJobBehavior`: `KeepDatabase`, `UpdateFromCode`
+- `OrphanedJobBehavior`: `Disable`, `Ignore`
