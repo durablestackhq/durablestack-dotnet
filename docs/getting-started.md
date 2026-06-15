@@ -273,6 +273,19 @@ public sealed class RecurringWorkerHeartbeatJob : IDurableJob
 }
 ```
 
+To register a recurring job as disabled initially, use `Enabled = false`:
+
+```csharp
+[RecurringJob("0 * * * *", TimeZone = "UTC", Enabled = false)]
+public sealed class DisabledByDefaultRecurringJob : IDurableJob
+{
+    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+```
+
 ## Explicit registration (power-user mode)
 
 If you want full manual control, disable auto-discovery and register jobs explicitly:
@@ -295,6 +308,8 @@ For timezone guidance and Windows/IANA mapping, see `docs/timezones.md`.
 For runtime recurring schedule controls (list/disable/enable/run-now/cron updates), see `docs/scheduled-job-management.md`.
 
 For stable API contracts targeted for `1.x`, see `docs/api-stability.md`.
+
+For recurring registration reconciliation behavior at startup (code-vs-database policy), see `docs/job-registration.md`.
 
 Run query endpoints in example APIs:
 

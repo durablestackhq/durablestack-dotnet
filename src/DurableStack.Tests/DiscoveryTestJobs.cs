@@ -22,6 +22,15 @@ public sealed class DiscoveryRecurringJob : IDurableJob
     }
 }
 
+[RecurringJob("0 * * * *", Enabled = false)]
+public sealed class DiscoveryDisabledRecurringJob : IDurableJob
+{
+    public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+    {
+        return Task.CompletedTask;
+    }
+}
+
 public sealed class DiscoveryPayload
 {
     public string Value { get; set; } = string.Empty;

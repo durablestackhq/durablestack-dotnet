@@ -135,6 +135,14 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    public IReadOnlyList<DurableJobRegistration> GetAllJobs()
+    {
+        lock (_gate)
+        {
+            return _byName.Values.ToList();
+        }
+    }
+
     private void AddRegistration(DurableJobRegistration registration)
     {
         if (registration.IsRecurring)
