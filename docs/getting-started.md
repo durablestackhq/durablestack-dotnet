@@ -294,6 +294,8 @@ For timezone guidance and Windows/IANA mapping, see `docs/timezones.md`.
 
 For runtime recurring schedule controls (list/disable/enable/run-now/cron updates), see `docs/scheduled-job-management.md`.
 
+For stable API contracts targeted for `1.x`, see `docs/api-stability.md`.
+
 Run query endpoints in example APIs:
 
 - `GET /runs`

@@ -88,6 +88,13 @@ Providers should return run data mapped consistently across stores:
 - lease owner/lease expiry
 - error message payloads
 
+For scalability, providers should support bounded query paths for common dashboard endpoints:
+
+- recent runs (`take` limited)
+- status-filtered runs (`take` limited)
+- job-name-filtered runs (`take` limited)
+- enqueue-only runs (`take` limited)
+
 ## Recurring job timezone contract
 
 Recurring job schedules must use IANA time zone IDs.
@@ -147,3 +154,5 @@ Current provider docs:
 - `docs/mysql.md`
 - `docs/sqlserver.md`
 - `docs/sqlite.md`
+
+For API surface freeze guidance, see `docs/api-stability.md`.

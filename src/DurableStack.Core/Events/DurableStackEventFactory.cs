@@ -24,6 +24,7 @@ public sealed class DurableStackEventFactory
         string? errorDetail = null)
     {
         var activity = Activity.Current;
+        var sanitizedErrorDetail = SanitizeErrorDetail(errorDetail);
 
         return new DurableStackEvent
         {
@@ -41,8 +42,29 @@ public sealed class DurableStackEventFactory
             DurationMs = durationMs,
             RetryAtUtc = retryAtUtc,
             ErrorType = errorType,
-            ErrorDetail = errorDetail,
+            ErrorDetail = sanitizedErrorDetail,
             Message = message,
         };
+    }
+
+    private string? SanitizeErrorDetail(string? errorDetail)
+    {
+        if (string.IsNullOrWhiteSpace(errorDetail))
+        {
+            return errorDetail;
+        }
+
+        if (!_options.Eventing.IncludeErrorDetail)
+        {
+            return null;
+        }
+
+        var maxLength = _options.Eventing.GetEffectiveMaxErrorDetailLength();
+        if (errorDetail.Length <= maxLength)
+        {
+            return errorDetail;
+        }
+
+        return errorDetail[..maxLength];
     }
 }

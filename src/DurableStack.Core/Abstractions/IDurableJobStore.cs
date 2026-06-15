@@ -35,10 +35,19 @@ public interface IDurableJobStore
 
     Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
+        int take,
+        CancellationToken cancellationToken);
+
     Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken);
 
     Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
+        int take,
+        CancellationToken cancellationToken);
+
+    Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
+        string status,
         int take,
         CancellationToken cancellationToken);
 

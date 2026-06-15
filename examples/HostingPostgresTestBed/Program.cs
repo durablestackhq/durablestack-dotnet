@@ -20,6 +20,10 @@ builder.Services.AddDurableStackPostgres(connString, options =>
 {
     //options.WorkerName = workerName;
     options.DatabaseTablePrefix = "Acme_";
+    options.Eventing.TenantId = "tenant_734dfc82f6dc458ca0fee1527734087e";
+    options.Eventing.ClientSecret = "4_upZjHtCkpgeeOwsiJToI5ErWdy84MZSgdu96lfciM";
+    options.Eventing.ServiceName = "HostingPostgresTestBed.Dev";
+    options.Eventing.IngestionApiBaseUrl = "https://localhost:7163";
 });
 // Optional additional sink for local debugging:
 // builder.Services.UseDurableStackLoggingEventSink();

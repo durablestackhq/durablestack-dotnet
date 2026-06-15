@@ -169,6 +169,22 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    public Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runs.Values
+                .OrderByDescending(x => x.ScheduledForUtc)
+                .Take(Math.Max(1, take))
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<JobRunRecord>>(result);
+        }
+    }
+
     public Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
         int take,
@@ -178,6 +194,24 @@ public sealed class InMemoryJobStore : IDurableJobStore
         {
             var result = _runs.Values
                 .Where(x => x.JobName.Equals(jobName, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.ScheduledForUtc)
+                .Take(Math.Max(1, take))
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<JobRunRecord>>(result);
+        }
+    }
+
+    public Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
+        string status,
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runs.Values
+                .Where(x => x.Status.Equals(status, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(x => x.ScheduledForUtc)
                 .Take(Math.Max(1, take))
                 .Select(Clone)
