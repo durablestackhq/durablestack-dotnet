@@ -399,7 +399,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 CronExpression = registration.CronExpression,
                 TimeZone = registration.TimeZone,
                 MaxAttempts = registration.MaxAttempts,
-                Enabled = true,
+                Enabled = registration.Enabled,
                 AllowConcurrentRuns = registration.AllowConcurrentRuns,
                 RetryBehavior = registration.RetryBehavior,
                 RetryInitialDelaySeconds = registration.RetryInitialDelaySeconds,

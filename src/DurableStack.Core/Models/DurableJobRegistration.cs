@@ -18,6 +18,8 @@ public sealed class DurableJobRegistration
 
     public bool AllowConcurrentRuns { get; init; }
 
+    public bool Enabled { get; init; } = true;
+
     public RetryBehavior? RetryBehavior { get; init; }
 
     public int? RetryInitialDelaySeconds { get; init; }

@@ -163,7 +163,15 @@ public sealed class ServiceCollectionExtensionsTests
             && x.JobName == "discovery-recurring-job"
             && x.MaxAttempts == 5
             && x.CronExpression == "*/5 * * * *"
-            && x.TimeZone == "UTC");
+            && x.TimeZone == "UTC"
+            && x.Enabled);
+
+        Assert.Contains(registrations, x =>
+            x.JobType == typeof(DiscoveryDisabledRecurringJob)
+            && x.JobName == "DiscoveryDisabledRecurringJob"
+            && x.CronExpression == "0 * * * *"
+            && x.TimeZone == "UTC"
+            && !x.Enabled);
 
         Assert.Contains(registrations, x =>
             x.JobType == typeof(DiscoveryArgsJob)
@@ -275,6 +283,19 @@ public sealed class ServiceCollectionExtensionsTests
         var options = provider.GetRequiredService<DurableStackOptions>();
 
         Assert.Equal(DurableStackJobActivationMode.ScopedPerExecution, options.JobActivation);
+    }
+
+    [Fact]
+    public void AddDurableStack_defaults_recurring_registration_sync_behaviors()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(ExistingRecurringJobBehavior.KeepDatabase, options.Recurring.RegistrationSync.ExistingJobBehavior);
+        Assert.Equal(OrphanedRecurringJobBehavior.Disable, options.Recurring.RegistrationSync.OrphanedJobBehavior);
     }
 
     [Fact]
