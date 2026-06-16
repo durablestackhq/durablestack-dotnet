@@ -9,6 +9,8 @@ DurableStack exposes `IDurableScheduleAdminService` for recurring schedule admin
 - enqueue a scheduled job immediately (`run now`)
 - update cron expression and time zone
 
+Cron expression support includes both 5-field (minute precision) and 6-field (second precision) formats.
+
 ## Service usage
 
 ```csharp
