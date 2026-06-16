@@ -251,6 +251,11 @@ If both `TenantId` and `ClientSecret` are set, API ingestion is enabled automati
 
 Use IANA time zone IDs for recurring schedules (for example, `America/Chicago` or `UTC`).
 
+Cron format support:
+
+- 5-field cron (minute precision), example: `*/5 * * * *`
+- 6-field cron (second precision), example: `*/30 * * * * *`
+
 ```csharp
 using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Core.Options;
