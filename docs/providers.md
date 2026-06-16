@@ -99,6 +99,11 @@ For scalability, providers should support bounded query paths for common dashboa
 
 Recurring job schedules must use IANA time zone IDs.
 
+Cron expression formats supported:
+
+- 5-field cron (minute precision)
+- 6-field cron (second precision)
+
 Examples:
 
 - `UTC`
