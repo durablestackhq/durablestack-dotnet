@@ -81,6 +81,8 @@ On startup, it ensures required tables and indexes exist, including recurring sl
 
 This is idempotent and safe to run repeatedly.
 
+Rollback expectation: if an upgrade must be reverted, restore from a pre-upgrade database backup or file snapshot.
+
 ## Claiming and distributed execution
 
 Due work is claimed atomically via transactional select-and-update semantics.

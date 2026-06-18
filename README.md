@@ -88,6 +88,7 @@ Published package IDs:
 - `docs/reliability-model.md`
 - `docs/timezones.md`
 - `docs/events.md`
+- `docs/opentelemetry.md`
 - `docs/job-registration.md`
 - `docs/scheduled-job-management.md`
 - `docs/data-retention.md`

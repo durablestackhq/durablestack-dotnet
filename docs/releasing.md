@@ -27,6 +27,21 @@ dotnet build DurableStack.sln
 dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj
 ```
 
+Additionally, run provider integration tests against real databases before stable releases:
+
+- `DURABLESTACK_TEST_POSTGRES`
+- `DURABLESTACK_TEST_MYSQL`
+- `DURABLESTACK_TEST_SQLSERVER`
+
+SQLite integration tests run by default.
+
+## Upgrade and rollback expectations
+
+- DurableStack migrations are additive and idempotent.
+- Upgrades are forward-safe from prior prerelease installs on the same provider.
+- Rollback is operational, not schema-down migration: restore the database from backup/snapshot taken before upgrade.
+- For production, run migrations in deployment steps before rolling app instances.
+
 ## Pack
 
 ```bash

@@ -68,6 +68,23 @@ public sealed class SqliteIntegrationTests
     }
 
     [Fact]
+    public async Task EnsureMigrationsAppliedAsync_is_idempotent_and_preserves_existing_runs()
+    {
+        await using var fixture = await SqliteFixture.CreateAsync("it_mig_safe_");
+        var store = fixture.Store;
+
+        await store.EnqueueAsync("job-mig", "job-type-mig", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
+
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+
+        var runs = await store.GetRunsAsync(CancellationToken.None);
+        Assert.Single(runs);
+
+        var claims = await store.ClaimDueRunsAsync("worker-mig", 1, TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Single(claims);
+    }
+
+    [Fact]
     public async Task ClaimDueRunsAsync_reclaims_expired_lease()
     {
         await using var fixture = await SqliteFixture.CreateAsync("it_lease_1_");

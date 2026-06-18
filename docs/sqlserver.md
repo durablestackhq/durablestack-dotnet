@@ -89,6 +89,8 @@ On startup, it ensures required tables and indexes exist, including recurring sl
 
 This is idempotent and safe to run on multiple instances.
 
+Rollback expectation: if an upgrade must be reverted, restore from a pre-upgrade database backup/snapshot.
+
 ### Production migration strategy
 
 If your runtime identity has restricted permissions, use a split-role approach:
