@@ -275,6 +275,11 @@ public static class ServiceCollectionExtensions
             options.LeaseDuration = TimeSpan.FromSeconds(30);
         }
 
+        if (double.IsNaN(options.PollJitterRatio) || options.PollJitterRatio < 0 || options.PollJitterRatio > 1)
+        {
+            options.PollJitterRatio = 0.2;
+        }
+
         if (string.IsNullOrWhiteSpace(options.WorkerName))
         {
             options.WorkerName = DurableStackOptions.CreateDefaultWorkerName();

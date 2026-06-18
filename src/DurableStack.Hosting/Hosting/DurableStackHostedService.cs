@@ -73,9 +73,28 @@ public sealed class DurableStackHostedService : BackgroundService
                 _logger.LogError(ex, "DurableStack worker loop failure.");
             }
 
-            await Task.Delay(_options.PollInterval, stoppingToken);
+            await Task.Delay(
+                ComputePollDelay(_options.PollInterval, _options.PollJitterEnabled, _options.PollJitterRatio),
+                stoppingToken);
         }
 
         _logger.LogInformation("DurableStack worker stopped.");
+    }
+
+    internal static TimeSpan ComputePollDelay(
+        TimeSpan pollInterval,
+        bool pollJitterEnabled,
+        double pollJitterRatio,
+        double? randomSample = null)
+    {
+        if (!pollJitterEnabled)
+        {
+            return pollInterval;
+        }
+
+        var ratio = Math.Clamp(pollJitterRatio, 0, 1);
+        var sample = randomSample ?? Random.Shared.NextDouble();
+        var factor = 1 + ((sample * 2 - 1) * ratio);
+        return TimeSpan.FromMilliseconds(Math.Max(1, pollInterval.TotalMilliseconds * factor));
     }
 }

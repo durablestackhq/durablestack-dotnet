@@ -45,7 +45,7 @@ public sealed class DurableStackOptions
         set => PollInterval = value > 0 ? TimeSpan.FromSeconds(value) : DefaultPollInterval;
     }
 
-    public int BatchSize { get; set; } = 50;
+    public int BatchSize { get; set; } = 5;
 
     public TimeSpan LeaseDuration { get; set; } = DefaultLeaseDuration;
 
@@ -62,6 +62,10 @@ public sealed class DurableStackOptions
     public bool RetryJitterEnabled { get; set; }
 
     public double RetryJitterRatio { get; set; } = 0.2;
+
+    public bool PollJitterEnabled { get; set; }
+
+    public double PollJitterRatio { get; set; } = 0.2;
 
     public DurableStackOptions UseInMemory()
     {

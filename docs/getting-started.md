@@ -137,7 +137,12 @@ Optional worker tuning can be set in configuration:
 }
 ```
 
-If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=50`, `LeaseDuration=30s`.
+If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=5`, `LeaseDuration=30s`.
+
+Poll jitter is available for multi-worker deployments:
+
+- `PollJitterEnabled=false` by default
+- `PollJitterRatio=0.2` by default (used when jitter is enabled)
 
 Job activation mode defaults to scoped-per-execution, so each run executes in a fresh DI scope.
 
