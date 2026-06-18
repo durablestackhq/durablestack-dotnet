@@ -2,6 +2,18 @@
 
 DurableStack uses lease-based claiming and explicit run state transitions to provide distributed-safe execution.
 
+## Job idempotency requirement
+
+Job handlers should be idempotent, or protected by external deduplication keys in downstream systems.
+
+Because retries and lease-expiry reclaim can re-run a job attempt, business-side effects must be safe to apply more than once.
+
+Examples:
+
+- use an idempotency key when calling external APIs
+- guard writes with natural unique keys or upsert semantics
+- check for "already completed" state before applying irreversible side effects
+
 ## Run execution model
 
 - workers claim only `pending` runs that are due

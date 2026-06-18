@@ -121,6 +121,12 @@ builder.Services.AddDurableStack(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
 });
+
+// Discoverable helper for distributed fairness tuning.
+builder.Services.AddDurableStackWithJitter(0.2, builder.Configuration, options =>
+{
+    options.WorkerName = workerName;
+});
 ```
 
 In this mode, `DurableStack:StorageProvider` selects the backing store and provider-specific connection options are read from the `DurableStack` section.
@@ -143,6 +149,31 @@ Poll jitter is available for multi-worker deployments:
 
 - `PollJitterEnabled=false` by default
 - `PollJitterRatio=0.2` by default (used when jitter is enabled)
+
+## Recommended Kubernetes worker profile
+
+For a typical multi-replica deployment, start with:
+
+- `PollIntervalSeconds=5`
+- `BatchSize=5`
+- `LeaseDurationSeconds=30`
+- `PollJitterEnabled=true`
+- `PollJitterRatio=0.2`
+- unique `WorkerName` per pod/process
+
+Example:
+
+```json
+{
+  "DurableStack": {
+    "PollIntervalSeconds": 5,
+    "BatchSize": 5,
+    "LeaseDurationSeconds": 30,
+    "PollJitterEnabled": true,
+    "PollJitterRatio": 0.2
+  }
+}
+```
 
 Job activation mode defaults to scoped-per-execution, so each run executes in a fresh DI scope.
 

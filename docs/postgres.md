@@ -71,6 +71,8 @@ On startup, it ensures required tables and indexes exist.
 
 This is idempotent and safe to run on multiple instances.
 
+Rollback expectation: if an upgrade must be reverted, restore from a pre-upgrade database backup/snapshot.
+
 ## Claiming and distributed execution
 
 Due work is claimed using `FOR UPDATE SKIP LOCKED` in a transaction.
