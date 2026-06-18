@@ -258,6 +258,36 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
+    public void AddDurableStack_defaults_batch_size_and_poll_jitter_settings()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(5, options.BatchSize);
+        Assert.False(options.PollJitterEnabled);
+        Assert.Equal(0.2, options.PollJitterRatio);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_poll_jitter_ratio_to_default()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.PollJitterRatio = 2;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(0.2, options.PollJitterRatio);
+    }
+
+    [Fact]
     public void AddDurableStack_reverts_invalid_ingestion_flush_interval_to_default()
     {
         var services = new ServiceCollection();

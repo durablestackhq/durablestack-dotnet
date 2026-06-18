@@ -39,6 +39,8 @@ This document defines the DurableStack .NET API surface considered stable for `1
 - `ConnectionStringName`
 - `DatabaseTablePrefix`
 - `PollInterval` / `PollIntervalSeconds`
+- `PollJitterEnabled`
+- `PollJitterRatio`
 - `BatchSize`
 - `LeaseDuration` / `LeaseDurationSeconds`
 - `RetryDelay`
