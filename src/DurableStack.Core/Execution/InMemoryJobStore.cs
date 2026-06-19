@@ -463,9 +463,13 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 return Task.FromResult(false);
             }
 
-            if (!state.AllowConcurrentRuns
-                && _runs.Values.Any(x => x.JobName.Equals(state.JobName, StringComparison.OrdinalIgnoreCase)
-                    && (x.Status == "pending" || x.Status == "leased")))
+            var hasPending = _runs.Values.Any(x => x.JobName.Equals(state.JobName, StringComparison.OrdinalIgnoreCase)
+                && x.Status == "pending");
+            var hasLeased = _runs.Values.Any(x => x.JobName.Equals(state.JobName, StringComparison.OrdinalIgnoreCase)
+                && x.Status == "leased");
+
+            if ((!state.AllowConcurrentRuns && (hasPending || hasLeased))
+                || (state.AllowConcurrentRuns && hasPending))
             {
                 return Task.FromResult(false);
             }

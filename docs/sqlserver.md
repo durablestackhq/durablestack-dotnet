@@ -15,7 +15,8 @@ Set provider mode under `DurableStack` and provide `DurableStack:SqlServer:Conne
     },
     "DatabaseTablePrefix": "Acme_",
     "PollIntervalSeconds": 0.5,
-    "BatchSize": 25,
+    "ClaimBatchSize": 25,
+    "MaxConcurrentRuns": 25,
     "LeaseDurationSeconds": 5
   }
 }
@@ -30,7 +31,12 @@ builder.Services.AddDurableStackSqlServer(builder.Configuration, options =>
 });
 ```
 
-If these tuning values are omitted, defaults are `PollInterval=5s`, `BatchSize=50`, and `LeaseDuration=30s`.
+If these tuning values are omitted, defaults are `PollInterval=5s`, `ClaimBatchSize=5`, `MaxConcurrentRuns=5`, and `LeaseDuration=30s`.
+
+Poll jitter is available for multi-worker deployments:
+
+- `PollJitterEnabled=false` by default
+- `PollJitterRatio=0.2` by default (used when jitter is enabled)
 
 If your app uses a non-default connection string name, set `options.ConnectionStringName`.
 
@@ -83,6 +89,8 @@ DurableStack auto-runs SQL Server migration setup at worker startup.
 On startup, it ensures required tables and indexes exist, including recurring slot uniqueness and lease/due indexes.
 
 This is idempotent and safe to run on multiple instances.
+
+Rollback expectation: if an upgrade must be reverted, restore from a pre-upgrade database backup/snapshot.
 
 ### Production migration strategy
 

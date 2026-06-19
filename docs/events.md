@@ -117,6 +117,8 @@ Behavior:
 
 DurableStack exposes tracing and metrics via OpenTelemetry.
 
+For full setup, exporter configuration, and troubleshooting, see `docs/opentelemetry.md`.
+
 Enable registration:
 
 ```csharp

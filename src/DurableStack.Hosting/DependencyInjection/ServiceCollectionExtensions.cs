@@ -190,6 +190,37 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Adds DurableStack with poll jitter enabled to help spread job claiming load
+    /// across workers in distributed environments.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="pollJitterRatio">
+    /// Poll jitter ratio from <c>0</c> to <c>1</c>.
+    /// A value of <c>0.2</c> means each poll delay varies by up to +/-20%.
+    /// </param>
+    /// <param name="configuration">Application configuration.</param>
+    /// <param name="configure">Optional additional DurableStack options configuration.</param>
+    /// <returns>The service collection.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="pollJitterRatio"/> is outside the range [0, 1].
+    /// </exception>
+    public static IServiceCollection AddDurableStackWithJitter(
+        this IServiceCollection services,
+        double pollJitterRatio,
+        IConfiguration configuration,
+        Action<DurableStackOptions>? configure = null)
+    {
+        ValidatePollJitterRatio(pollJitterRatio);
+
+        return services.AddDurableStack(configuration, options =>
+        {
+            options.PollJitterEnabled = true;
+            options.PollJitterRatio = pollJitterRatio;
+            configure?.Invoke(options);
+        });
+    }
+
     public static IServiceCollection AddDurableStack(
         this IServiceCollection services,
         Action<DurableStackOptions>? configure = null)
@@ -197,6 +228,35 @@ public static class ServiceCollectionExtensions
         var options = CreateOptionsFromRegisteredConfigurationOrDefault(services, configure);
 
         return services.AddDurableStack(options);
+    }
+
+    /// <summary>
+    /// Adds DurableStack with poll jitter enabled to help spread job claiming load
+    /// across workers in distributed environments.
+    /// </summary>
+    /// <param name="services">The service collection.</param>
+    /// <param name="pollJitterRatio">
+    /// Poll jitter ratio from <c>0</c> to <c>1</c>.
+    /// A value of <c>0.2</c> means each poll delay varies by up to +/-20%.
+    /// </param>
+    /// <param name="configure">Optional additional DurableStack options configuration.</param>
+    /// <returns>The service collection.</returns>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// Thrown when <paramref name="pollJitterRatio"/> is outside the range [0, 1].
+    /// </exception>
+    public static IServiceCollection AddDurableStackWithJitter(
+        this IServiceCollection services,
+        double pollJitterRatio,
+        Action<DurableStackOptions>? configure = null)
+    {
+        ValidatePollJitterRatio(pollJitterRatio);
+
+        return services.AddDurableStack(options =>
+        {
+            options.PollJitterEnabled = true;
+            options.PollJitterRatio = pollJitterRatio;
+            configure?.Invoke(options);
+        });
     }
 
     private static DurableStackOptions CreateOptionsFromRegisteredConfigurationOrDefault(
@@ -261,6 +321,17 @@ public static class ServiceCollectionExtensions
         return optionsConnectionString;
     }
 
+    private static void ValidatePollJitterRatio(double pollJitterRatio)
+    {
+        if (double.IsNaN(pollJitterRatio) || pollJitterRatio < 0 || pollJitterRatio > 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(pollJitterRatio),
+                pollJitterRatio,
+                "Poll jitter ratio must be between 0 and 1.");
+        }
+    }
+
     private static IServiceCollection AddDurableStack(
         this IServiceCollection services,
         DurableStackOptions options)
@@ -273,6 +344,21 @@ public static class ServiceCollectionExtensions
         if (options.LeaseDuration <= TimeSpan.Zero)
         {
             options.LeaseDuration = TimeSpan.FromSeconds(30);
+        }
+
+        if (options.ClaimBatchSize <= 0)
+        {
+            options.ClaimBatchSize = 5;
+        }
+
+        if (options.MaxConcurrentRuns <= 0)
+        {
+            options.MaxConcurrentRuns = 5;
+        }
+
+        if (double.IsNaN(options.PollJitterRatio) || options.PollJitterRatio < 0 || options.PollJitterRatio > 1)
+        {
+            options.PollJitterRatio = 0.2;
         }
 
         if (string.IsNullOrWhiteSpace(options.WorkerName))

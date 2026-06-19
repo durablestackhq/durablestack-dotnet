@@ -100,6 +100,31 @@ public sealed class MySqlIntegrationTests
     }
 
     [Fact]
+    public async Task EnsureMigrationsAppliedAsync_is_idempotent_and_preserves_existing_runs()
+    {
+        var connectionString = GetConnectionStringOrSkip();
+        if (connectionString is null)
+        {
+            return;
+        }
+
+        var prefix = $"it_mig_safe_{Guid.NewGuid():N}_";
+        var options = CreateOptions(connectionString, prefix);
+        var store = new MySqlJobStore(options);
+
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+        await store.EnqueueAsync("job-mig", "job-type-mig", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
+
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+
+        var runs = await store.GetRunsAsync(CancellationToken.None);
+        Assert.Single(runs);
+
+        var claims = await store.ClaimDueRunsAsync("worker-mig", 1, TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Single(claims);
+    }
+
+    [Fact]
     public async Task ClaimDueRunsAsync_reclaims_expired_lease()
     {
         var connectionString = GetConnectionStringOrSkip();

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -8,10 +9,11 @@ using DurableStack.Core.Diagnostics;
 using DurableStack.Core.Events;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
+using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Core.Execution;
 
-public sealed class DurableStackProcessor : IDurableStackProcessor
+public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRunDrainer
 {
     private readonly IDurableJobStore _store;
     private readonly IDurableJobRegistry _registry;
@@ -20,7 +22,10 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
     private readonly DurableStackOptions _options;
     private readonly IReadOnlyList<IDurableStackEventSink> _eventSinks;
     private readonly DurableStackEventFactory _eventFactory;
+    private readonly ILogger<DurableStackProcessor>? _logger;
     private readonly object _retentionGate = new();
+    private readonly object _inFlightGate = new();
+    private readonly HashSet<Task> _inFlightRuns = new();
     private DateTimeOffset _nextRetentionSweepAtUtc = DateTimeOffset.MinValue;
 
     public DurableStackProcessor(
@@ -30,7 +35,8 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
         IRecurringJobScheduler recurringScheduler,
         DurableStackOptions options,
         IEnumerable<IDurableStackEventSink> eventSinks,
-        DurableStackEventFactory eventFactory)
+        DurableStackEventFactory eventFactory,
+        ILogger<DurableStackProcessor>? logger = null)
     {
         _store = store;
         _registry = registry;
@@ -39,6 +45,7 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
         _options = options;
         _eventSinks = eventSinks.ToList();
         _eventFactory = eventFactory;
+        _logger = logger;
     }
 
     public async Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
@@ -53,9 +60,17 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
             DurableStackTelemetry.RecurringRunsMaterialized.Add(materialized);
         }
 
+        var availableExecutionSlots = GetAvailableExecutionSlots();
+        if (availableExecutionSlots <= 0)
+        {
+            return 0;
+        }
+
+        var claimCount = Math.Max(1, Math.Min(_options.ClaimBatchSize, availableExecutionSlots));
+
         var claimed = await _store.ClaimDueRunsAsync(
             _options.WorkerName,
-            _options.BatchSize,
+            claimCount,
             _options.LeaseDuration,
             cancellationToken);
 
@@ -70,10 +85,77 @@ public sealed class DurableStackProcessor : IDurableStackProcessor
                 _eventFactory.Create(DurableStackEventTypes.JobClaimed, run),
                 cancellationToken);
 
-            await ExecuteRunAsync(run, cancellationToken);
+            TrackInFlightRun(ExecuteRunSafelyAsync(run, cancellationToken));
         }
 
         return claimed.Count;
+    }
+
+    private int GetAvailableExecutionSlots()
+    {
+        lock (_inFlightGate)
+        {
+            _ = _inFlightRuns.RemoveWhere(task => task.IsCompleted);
+            return Math.Max(0, _options.MaxConcurrentRuns - _inFlightRuns.Count);
+        }
+    }
+
+    private void TrackInFlightRun(Task task)
+    {
+        lock (_inFlightGate)
+        {
+            _inFlightRuns.Add(task);
+        }
+
+        _ = task.ContinueWith(
+            completedTask =>
+            {
+                _ = completedTask.Exception;
+                lock (_inFlightGate)
+                {
+                    _inFlightRuns.Remove(completedTask);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    public async Task DrainInFlightRunsAsync(CancellationToken cancellationToken)
+    {
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Task[] snapshot;
+            lock (_inFlightGate)
+            {
+                _ = _inFlightRuns.RemoveWhere(task => task.IsCompleted);
+                if (_inFlightRuns.Count == 0)
+                {
+                    return;
+                }
+
+                snapshot = _inFlightRuns.ToArray();
+            }
+
+            await Task.WhenAll(snapshot).WaitAsync(cancellationToken);
+        }
+    }
+
+    private async Task ExecuteRunSafelyAsync(JobRunRecord run, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await ExecuteRunAsync(run, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "DurableStack run execution wrapper failure. RunId={RunId} JobName={JobName}", run.Id, run.JobName);
+        }
     }
 
     private async Task PruneHistoricalRunsIfDueAsync(CancellationToken cancellationToken)

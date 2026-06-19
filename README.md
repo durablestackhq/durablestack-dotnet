@@ -14,14 +14,18 @@ This repository ships the first .NET beta line (`0.1.*`).
 ## What works today
 
 - Durable one-off and delayed jobs.
-- Recurring cron jobs with IANA timezone support.
+- Recurring cron jobs with IANA timezone support (5-field and 6-field with seconds).
+- Startup registration sync policies (`KeepDatabase`/`UpdateFromCode`, `Disable`/`Ignore`).
+- Recurring jobs can be declared disabled at registration (`Enabled = false`).
 - Distributed-safe claiming, leasing, lease expiry reclaim, and heartbeat extension.
 - Retry and terminal failure transitions.
+- Poll jitter controls for multi-worker fairness (`PollJitterEnabled`, `PollJitterRatio`).
+- Discoverable jitter helper: `AddDurableStackWithJitter(...)`.
 - Optional, hosted observability via https://app.durablestack.com
 - Startup-safe migrations for relational providers.
 - Query APIs for recent and status-filtered runs.
 - Event sink abstraction with logging and API ingestion support.
-- OpenTelemetry hooks.
+- OpenTelemetry hooks with automated instrumentation coverage.
 
 Supported providers in this .NET implementation:
 
@@ -88,6 +92,7 @@ Published package IDs:
 - `docs/reliability-model.md`
 - `docs/timezones.md`
 - `docs/events.md`
+- `docs/opentelemetry.md`
 - `docs/job-registration.md`
 - `docs/scheduled-job-management.md`
 - `docs/data-retention.md`
@@ -120,9 +125,12 @@ Recommended default for most apps: start with `DurableStack.Hosting`, then move 
 ## Job setup
 
 - Default behavior: `AddDurableStack(...)` auto-discovers public `IDurableJob` and `IDurableJob<TArgs>` classes in the app assembly
-- Recurring jobs: add `[RecurringJob("...")]` on the class (optional `[DurableJob]` can override name/max attempts)
+- Recurring jobs: add `[RecurringJob("...")]` on the class (5-field or 6-field cron; optional `[DurableJob]` can override name/max attempts)
+- Disabled at startup: use `[RecurringJob(..., Enabled = false)]` when needed
 - Power-user mode: set `options.JobRegistration.AutoDiscoverJobsFromAssembly = false` and use explicit `AddDurableJob<...>(...)`
+- Startup sync behavior defaults: `ExistingJobBehavior=KeepDatabase`, `OrphanedJobBehavior=Disable`
 - Non-hosted/manual loops: call `provider.InitializeDurableStackAsync(...)` once; hosted apps already initialize automatically
+- Multi-worker helper: `AddDurableStackWithJitter(0.2, ...)` enables poll jitter for better workload distribution
 
 ## Project metadata
 

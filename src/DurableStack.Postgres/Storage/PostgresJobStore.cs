@@ -868,12 +868,22 @@ public sealed class PostgresJobStore : IDurableJobStore
                   and schedule_type = 'cron'
                   and next_run_at_utc = @expected_next_run_at_utc
                   and (
-                      allow_concurrent_runs = true
-                      or not exists (
-                          select 1
-                          from {_runsTable} active
-                          where active.job_name = @name
-                            and active.status in ('pending', 'leased')))
+                      (
+                          allow_concurrent_runs = false
+                          and not exists (
+                              select 1
+                              from {_runsTable} active
+                              where active.job_name = @name
+                                and active.status in ('pending', 'leased'))
+                      )
+                      or (
+                          allow_concurrent_runs = true
+                          and not exists (
+                              select 1
+                              from {_runsTable} active
+                              where active.job_name = @name
+                                and active.status = 'pending')
+                      ))
                 returning name
             )
             insert into {_runsTable} (
