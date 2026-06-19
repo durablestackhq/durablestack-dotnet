@@ -15,6 +15,7 @@ namespace DurableStack.Hosting.Hosting;
 public sealed class DurableStackHostedService : BackgroundService
 {
     private readonly IDurableStackProcessor _processor;
+    private readonly IInFlightRunDrainer? _inFlightRunDrainer;
     private readonly IDurableStackStoreMigrator _storeMigrator;
     private readonly IRecurringJobInitializer _recurringInitializer;
     private readonly DurableStackOptions _options;
@@ -32,6 +33,7 @@ public sealed class DurableStackHostedService : BackgroundService
         ILogger<DurableStackHostedService> logger)
     {
         _processor = processor;
+        _inFlightRunDrainer = processor as IInFlightRunDrainer;
         _storeMigrator = storeMigrator;
         _recurringInitializer = recurringInitializer;
         _options = options;
@@ -46,11 +48,26 @@ public sealed class DurableStackHostedService : BackgroundService
         await _recurringInitializer.InitializeAsync(stoppingToken);
 
         _logger.LogInformation(
-            "DurableStack worker started. WorkerName={WorkerName} BatchSize={BatchSize} PollIntervalMs={PollIntervalMs}",
+            "DurableStack worker started. WorkerName={WorkerName} ClaimBatchSize={ClaimBatchSize} MaxConcurrentRuns={MaxConcurrentRuns} PollIntervalMs={PollIntervalMs}",
             _options.WorkerName,
-            _options.BatchSize,
+            _options.ClaimBatchSize,
+            _options.MaxConcurrentRuns,
             _options.PollInterval.TotalMilliseconds);
 
+        var heartbeatTask = RunHeartbeatLoopAsync(stoppingToken);
+        var processingTask = RunProcessingLoopAsync(stoppingToken);
+
+        await Task.WhenAll(heartbeatTask, processingTask);
+        if (_inFlightRunDrainer is not null)
+        {
+            await _inFlightRunDrainer.DrainInFlightRunsAsync(stoppingToken);
+        }
+
+        _logger.LogInformation("DurableStack worker stopped.");
+    }
+
+    private async Task RunHeartbeatLoopAsync(CancellationToken stoppingToken)
+    {
         while (!stoppingToken.IsCancellationRequested)
         {
             try
@@ -61,7 +78,26 @@ public sealed class DurableStackHostedService : BackgroundService
                     await sink.PublishAsync(heartbeat, stoppingToken);
                 }
                 DurableStackTelemetry.WorkerHeartbeats.Add(1);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "DurableStack worker heartbeat failure.");
+            }
 
+            await Task.Delay(_options.PollInterval, stoppingToken);
+        }
+    }
+
+    private async Task RunProcessingLoopAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            try
+            {
                 await _processor.ProcessOnceAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -70,15 +106,13 @@ public sealed class DurableStackHostedService : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "DurableStack worker loop failure.");
+                _logger.LogError(ex, "DurableStack worker processing loop failure.");
             }
 
             await Task.Delay(
                 ComputePollDelay(_options.PollInterval, _options.PollJitterEnabled, _options.PollJitterRatio),
                 stoppingToken);
         }
-
-        _logger.LogInformation("DurableStack worker stopped.");
     }
 
     internal static TimeSpan ComputePollDelay(

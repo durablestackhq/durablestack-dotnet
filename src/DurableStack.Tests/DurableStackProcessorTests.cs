@@ -33,7 +33,7 @@ public sealed class DurableStackProcessorTests
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
@@ -87,7 +87,7 @@ public sealed class DurableStackProcessorTests
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromSeconds(30),
         };
@@ -138,7 +138,7 @@ public sealed class DurableStackProcessorTests
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromSeconds(30),
         };
@@ -185,7 +185,7 @@ public sealed class DurableStackProcessorTests
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
@@ -230,7 +230,7 @@ public sealed class DurableStackProcessorTests
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromMilliseconds(300),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
@@ -284,14 +284,14 @@ public sealed class DurableStackProcessorTests
         var optionsA = new DurableStackOptions
         {
             WorkerName = "worker-a",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
         var optionsB = new DurableStackOptions
         {
             WorkerName = "worker-b",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };
@@ -344,7 +344,7 @@ public sealed class DurableStackProcessorTests
         var options = new DurableStackOptions
         {
             WorkerName = "test-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(50),
         };

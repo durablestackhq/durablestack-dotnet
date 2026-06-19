@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Linq;
+using System.Net;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using DurableStack.Core.Abstractions;
@@ -13,11 +15,13 @@ using DurableStack.Core.Execution;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
 using DurableStack.Hosting.DependencyInjection;
+using DurableStack.Hosting.Events;
 using DurableStack.Hosting.Hosting;
 using DurableStack.Tests.TestSupport;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Tests;
 
@@ -148,6 +152,85 @@ public sealed class OpenTelemetryHooksTests
     }
 
     [Fact]
+    public async Task HostedService_continues_heartbeats_while_processing_is_in_flight()
+    {
+        var options = new DurableStackOptions
+        {
+            WorkerName = "otel-worker",
+            PollInterval = TimeSpan.FromMilliseconds(50),
+        };
+
+        var processor = new BlockingProcessor();
+        var sink = new RecordingEventSink();
+
+        var service = new DurableStackHostedService(
+            processor,
+            new NoOpMigrator(),
+            new NoOpRecurringInitializer(),
+            options,
+            new[] { sink },
+            new DurableStackEventFactory(options),
+            NullLogger<DurableStackHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        await processor.WaitForFirstCallAsync();
+        await Task.Delay(220);
+
+        var heartbeatsBeforeRelease = sink.Events.Count(x => x.EventType == DurableStackEventTypes.WorkerHeartbeat);
+
+        processor.Release();
+        await service.StopAsync(CancellationToken.None);
+
+        Assert.True(heartbeatsBeforeRelease >= 2, $"Expected at least 2 heartbeats while processing blocked, observed {heartbeatsBeforeRelease}.");
+    }
+
+    [Fact]
+    public async Task IngestionSync_continues_flushing_while_processing_is_in_flight()
+    {
+        var options = new DurableStackOptions
+        {
+            WorkerName = "otel-worker",
+            PollInterval = TimeSpan.FromMilliseconds(50),
+        };
+        options.Eventing.TenantId = "tenant-test";
+        options.Eventing.ClientSecret = "secret-test";
+        options.Eventing.IngestionApiBaseUrl = "https://example.test";
+        options.Eventing.IngestionFlushInterval = TimeSpan.FromMilliseconds(50);
+        options.Eventing.IngestionMaxRetryAttempts = 1;
+
+        var processor = new BlockingProcessor();
+        var sink = new IngestionDurableStackEventSink(NullLogger<IngestionDurableStackEventSink>.Instance);
+        var handler = new CountingHttpMessageHandler();
+        var ingestionService = new IngestionEventSyncHostedService(
+            new IDurableStackEventSink[] { sink },
+            options,
+            new FixedHttpClientFactory(new HttpClient(handler)),
+            NullLogger<IngestionEventSyncHostedService>.Instance);
+
+        var workerService = new DurableStackHostedService(
+            processor,
+            new NoOpMigrator(),
+            new NoOpRecurringInitializer(),
+            options,
+            new IDurableStackEventSink[] { sink },
+            new DurableStackEventFactory(options),
+            NullLogger<DurableStackHostedService>.Instance);
+
+        await ingestionService.StartAsync(CancellationToken.None);
+        await workerService.StartAsync(CancellationToken.None);
+
+        await processor.WaitForFirstCallAsync();
+        await Task.Delay(250);
+        var postsWhileBlocked = handler.RequestCount;
+
+        processor.Release();
+        await workerService.StopAsync(CancellationToken.None);
+        await ingestionService.StopAsync(CancellationToken.None);
+
+        Assert.True(postsWhileBlocked >= 1, $"Expected ingestion flushes while processing blocked, observed {postsWhileBlocked} posts.");
+    }
+
+    [Fact]
     public void AddDurableStackOpenTelemetry_registers_without_startup_errors()
     {
         var services = new ServiceCollection();
@@ -167,7 +250,7 @@ public sealed class OpenTelemetryHooksTests
         var options = new DurableStackOptions
         {
             WorkerName = "otel-worker",
-            BatchSize = 5,
+            ClaimBatchSize = 5,
             LeaseDuration = TimeSpan.FromSeconds(30),
         };
 
@@ -280,6 +363,86 @@ public sealed class OpenTelemetryHooksTests
             var timeout = Task.Delay(TimeSpan.FromSeconds(5));
             var completed = await Task.WhenAny(_firstCall.Task, timeout);
             Assert.True(completed == _firstCall.Task, "Hosted service did not process a loop in time.");
+        }
+    }
+
+    private sealed class BlockingProcessor : IDurableStackProcessor
+    {
+        private readonly TaskCompletionSource _entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource _release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
+        {
+            _entered.TrySetResult();
+            await _release.Task.WaitAsync(cancellationToken);
+            return 0;
+        }
+
+        public async Task WaitForFirstCallAsync()
+        {
+            var timeout = Task.Delay(TimeSpan.FromSeconds(5));
+            var completed = await Task.WhenAny(_entered.Task, timeout);
+            Assert.True(completed == _entered.Task, "Processing loop did not enter in time.");
+        }
+
+        public void Release()
+        {
+            _release.TrySetResult();
+        }
+    }
+
+    private sealed class RecordingEventSink : IDurableStackEventSink
+    {
+        private readonly object _gate = new();
+        private readonly List<DurableStackEvent> _events = new();
+
+        public IReadOnlyList<DurableStackEvent> Events
+        {
+            get
+            {
+                lock (_gate)
+                {
+                    return _events.ToList();
+                }
+            }
+        }
+
+        public Task PublishAsync(DurableStackEvent @event, CancellationToken cancellationToken = default)
+        {
+            lock (_gate)
+            {
+                _events.Add(@event);
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class CountingHttpMessageHandler : HttpMessageHandler
+    {
+        private int _requestCount;
+
+        public int RequestCount => _requestCount;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            _ = Interlocked.Increment(ref _requestCount);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
+        }
+    }
+
+    private sealed class FixedHttpClientFactory : IHttpClientFactory
+    {
+        private readonly HttpClient _client;
+
+        public FixedHttpClientFactory(HttpClient client)
+        {
+            _client = client;
+        }
+
+        public HttpClient CreateClient(string name)
+        {
+            return _client;
         }
     }
 }

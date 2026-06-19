@@ -41,7 +41,9 @@ This document defines the DurableStack .NET API surface considered stable for `1
 - `PollInterval` / `PollIntervalSeconds`
 - `PollJitterEnabled`
 - `PollJitterRatio`
-- `BatchSize`
+- `ClaimBatchSize`
+- `BatchSize` (compatibility alias)
+- `MaxConcurrentRuns`
 - `LeaseDuration` / `LeaseDurationSeconds`
 - `RetryDelay`
 - `JobActivation`
