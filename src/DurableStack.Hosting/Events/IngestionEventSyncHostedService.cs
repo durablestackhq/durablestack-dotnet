@@ -240,6 +240,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                 RunId = evt.RunId,
                 JobName = evt.JobName,
                 Attempt = evt.Attempt,
+                MaxAttempts = evt.MaxAttempts,
                 WorkerName = evt.WorkerName,
                 DurationMs = evt.DurationMs,
                 ErrorType = evt.ErrorType,
