@@ -18,6 +18,8 @@ public sealed class DurableStackEvent
 
     public int? Attempt { get; init; }
 
+    public int? MaxAttempts { get; init; }
+
     public string? WorkerName { get; init; }
 
     public string? TenantId { get; init; }

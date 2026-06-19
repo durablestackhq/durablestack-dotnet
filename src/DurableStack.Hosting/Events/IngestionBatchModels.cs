@@ -42,6 +42,9 @@ internal sealed class TelemetryEventDto
     [JsonPropertyName("attempt")]
     public int? Attempt { get; init; }
 
+    [JsonPropertyName("maxAttempts")]
+    public int? MaxAttempts { get; init; }
+
     [JsonPropertyName("workerName")]
     public string? WorkerName { get; init; }
 
