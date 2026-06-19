@@ -346,6 +346,16 @@ public static class ServiceCollectionExtensions
             options.LeaseDuration = TimeSpan.FromSeconds(30);
         }
 
+        if (options.ClaimBatchSize <= 0)
+        {
+            options.ClaimBatchSize = 5;
+        }
+
+        if (options.MaxConcurrentRuns <= 0)
+        {
+            options.MaxConcurrentRuns = 5;
+        }
+
         if (double.IsNaN(options.PollJitterRatio) || options.PollJitterRatio < 0 || options.PollJitterRatio > 1)
         {
             options.PollJitterRatio = 0.2;

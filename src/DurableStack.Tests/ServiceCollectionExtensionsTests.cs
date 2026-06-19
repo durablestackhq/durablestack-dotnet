@@ -259,7 +259,7 @@ public sealed class ServiceCollectionExtensionsTests
     }
 
     [Fact]
-    public void AddDurableStack_defaults_batch_size_and_poll_jitter_settings()
+    public void AddDurableStack_defaults_claim_batch_size_concurrency_and_poll_jitter_settings()
     {
         var services = new ServiceCollection();
         services.AddDurableStack();
@@ -267,9 +267,29 @@ public sealed class ServiceCollectionExtensionsTests
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<DurableStackOptions>();
 
+        Assert.Equal(5, options.ClaimBatchSize);
         Assert.Equal(5, options.BatchSize);
+        Assert.Equal(5, options.MaxConcurrentRuns);
         Assert.False(options.PollJitterEnabled);
         Assert.Equal(0.2, options.PollJitterRatio);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_claim_batch_and_concurrency_to_defaults()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.ClaimBatchSize = 0;
+            options.MaxConcurrentRuns = -1;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(5, options.ClaimBatchSize);
+        Assert.Equal(5, options.MaxConcurrentRuns);
     }
 
     [Fact]

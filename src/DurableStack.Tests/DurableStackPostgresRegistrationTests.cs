@@ -78,7 +78,7 @@ public sealed class DurableStackPostgresRegistrationTests
         var options = provider.GetRequiredService<DurableStackOptions>();
 
         Assert.Equal("Acme_", options.DatabaseTablePrefix);
-        Assert.Equal(25, options.BatchSize);
+        Assert.Equal(25, options.ClaimBatchSize);
     }
 
     [Fact]
@@ -99,13 +99,13 @@ public sealed class DurableStackPostgresRegistrationTests
             options =>
             {
                 options.DatabaseTablePrefix = "Custom_";
-                options.BatchSize = 12;
+                options.ClaimBatchSize = 12;
             });
 
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<DurableStackOptions>();
 
         Assert.Equal("Custom_", options.DatabaseTablePrefix);
-        Assert.Equal(12, options.BatchSize);
+        Assert.Equal(12, options.ClaimBatchSize);
     }
 }

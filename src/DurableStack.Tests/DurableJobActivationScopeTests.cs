@@ -118,7 +118,7 @@ public sealed class DurableJobActivationScopeTests
         var options = new DurableStackOptions
         {
             WorkerName = "retry-worker",
-            BatchSize = 10,
+            ClaimBatchSize = 10,
             LeaseDuration = TimeSpan.FromSeconds(10),
             RetryDelay = TimeSpan.FromMilliseconds(10),
         };

@@ -15,7 +15,8 @@ Set provider mode under `DurableStack` and provide `DurableStack:MySql:Connectio
     },
     "DatabaseTablePrefix": "Acme_",
     "PollIntervalSeconds": 0.5,
-    "BatchSize": 25,
+    "ClaimBatchSize": 25,
+    "MaxConcurrentRuns": 25,
     "LeaseDurationSeconds": 5
   }
 }
@@ -30,7 +31,7 @@ builder.Services.AddDurableStackMySql(builder.Configuration, options =>
 });
 ```
 
-If these tuning values are omitted, defaults are `PollInterval=5s`, `BatchSize=5`, and `LeaseDuration=30s`.
+If these tuning values are omitted, defaults are `PollInterval=5s`, `ClaimBatchSize=5`, `MaxConcurrentRuns=5`, and `LeaseDuration=30s`.
 
 Poll jitter is available for multi-worker deployments:
 

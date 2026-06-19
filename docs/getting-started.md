@@ -137,13 +137,14 @@ Optional worker tuning can be set in configuration:
 {
   "DurableStack": {
     "PollIntervalSeconds": 0.5,
-    "BatchSize": 25,
+    "ClaimBatchSize": 25,
+    "MaxConcurrentRuns": 25,
     "LeaseDurationSeconds": 5
   }
 }
 ```
 
-If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `BatchSize=5`, `LeaseDuration=30s`.
+If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `ClaimBatchSize=5`, `MaxConcurrentRuns=5`, `LeaseDuration=30s`.
 
 Poll jitter is available for multi-worker deployments:
 
@@ -155,7 +156,8 @@ Poll jitter is available for multi-worker deployments:
 For a typical multi-replica deployment, start with:
 
 - `PollIntervalSeconds=5`
-- `BatchSize=5`
+- `ClaimBatchSize=5`
+- `MaxConcurrentRuns=5`
 - `LeaseDurationSeconds=30`
 - `PollJitterEnabled=true`
 - `PollJitterRatio=0.2`
@@ -167,7 +169,8 @@ Example:
 {
   "DurableStack": {
     "PollIntervalSeconds": 5,
-    "BatchSize": 5,
+    "ClaimBatchSize": 5,
+    "MaxConcurrentRuns": 5,
     "LeaseDurationSeconds": 30,
     "PollJitterEnabled": true,
     "PollJitterRatio": 0.2
