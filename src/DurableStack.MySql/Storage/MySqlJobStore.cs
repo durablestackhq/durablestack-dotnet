@@ -912,12 +912,22 @@ public sealed class MySqlJobStore : IDurableJobStore
               and schedule_type = 'cron'
               and next_run_at_utc = @expected_next_run_at_utc
               and (
-                  allow_concurrent_runs = 1
-                  or not exists (
-                      select 1
-                      from {_runsTable} active
-                      where active.job_name = @name
-                        and active.status in ('pending', 'leased')));
+                  (
+                      allow_concurrent_runs = 0
+                      and not exists (
+                          select 1
+                          from {_runsTable} active
+                          where active.job_name = @name
+                            and active.status in ('pending', 'leased'))
+                  )
+                  or (
+                      allow_concurrent_runs = 1
+                      and not exists (
+                          select 1
+                          from {_runsTable} active
+                          where active.job_name = @name
+                            and active.status = 'pending')
+                  ));
             """;
 
         await using (var update = new MySqlCommand(updateSql, connection, transaction))

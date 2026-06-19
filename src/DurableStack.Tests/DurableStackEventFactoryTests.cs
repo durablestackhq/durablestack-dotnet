@@ -15,13 +15,15 @@ public sealed class DurableStackEventFactoryTests
         var factory = new DurableStackEventFactory(options);
         var evt = factory.Create(
             DurableStackEventTypes.JobFailed,
-            run: new JobRunRecord { Id = Guid.NewGuid(), JobName = "job-a", Attempt = 1 },
+            run: new JobRunRecord { Id = Guid.NewGuid(), JobName = "job-a", Attempt = 1, MaxAttempts = 3 },
             message: "failed",
             errorType: typeof(InvalidOperationException).FullName,
             errorDetail: "secret stack trace details");
 
         Assert.Equal(typeof(InvalidOperationException).FullName, evt.ErrorType);
         Assert.Null(evt.ErrorDetail);
+        Assert.Equal(1, evt.Attempt);
+        Assert.Equal(3, evt.MaxAttempts);
     }
 
     [Fact]
@@ -34,11 +36,13 @@ public sealed class DurableStackEventFactoryTests
         var factory = new DurableStackEventFactory(options);
         var evt = factory.Create(
             DurableStackEventTypes.JobFailed,
-            run: new JobRunRecord { Id = Guid.NewGuid(), JobName = "job-a", Attempt = 1 },
+            run: new JobRunRecord { Id = Guid.NewGuid(), JobName = "job-a", Attempt = 1, MaxAttempts = 3 },
             message: "failed",
             errorType: typeof(InvalidOperationException).FullName,
             errorDetail: "0123456789");
 
         Assert.Equal("01234567", evt.ErrorDetail);
+        Assert.Equal(1, evt.Attempt);
+        Assert.Equal(3, evt.MaxAttempts);
     }
 }

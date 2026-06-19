@@ -868,12 +868,22 @@ public sealed class SqlServerJobStore : IDurableJobStore
               and schedule_type = N'cron'
               and next_run_at_utc = @expected_next_run_at_utc
               and (
-                  allow_concurrent_runs = 1
-                  or not exists (
-                      select 1
-                      from {_runsTable} active
-                      where active.job_name = @name
-                        and active.status in (N'pending', N'leased')));
+                  (
+                      allow_concurrent_runs = 0
+                      and not exists (
+                          select 1
+                          from {_runsTable} active
+                          where active.job_name = @name
+                            and active.status in (N'pending', N'leased'))
+                  )
+                  or (
+                      allow_concurrent_runs = 1
+                      and not exists (
+                          select 1
+                          from {_runsTable} active
+                          where active.job_name = @name
+                            and active.status = N'pending')
+                  ));
             
             insert into {_runsTable} (
                 id,

@@ -6,6 +6,9 @@ public sealed class DurableStackOptions
 {
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultLeaseDuration = TimeSpan.FromSeconds(30);
+    private const int DefaultClaimBatchSize = 5;
+    private const int DefaultMaxConcurrentRuns = 5;
+    private int _claimBatchSize = DefaultClaimBatchSize;
 
     public static string CreateDefaultWorkerName()
     {
@@ -45,7 +48,19 @@ public sealed class DurableStackOptions
         set => PollInterval = value > 0 ? TimeSpan.FromSeconds(value) : DefaultPollInterval;
     }
 
-    public int BatchSize { get; set; } = 50;
+    public int ClaimBatchSize
+    {
+        get => _claimBatchSize;
+        set => _claimBatchSize = value > 0 ? value : DefaultClaimBatchSize;
+    }
+
+    public int BatchSize
+    {
+        get => ClaimBatchSize;
+        set => ClaimBatchSize = value;
+    }
+
+    public int MaxConcurrentRuns { get; set; } = DefaultMaxConcurrentRuns;
 
     public TimeSpan LeaseDuration { get; set; } = DefaultLeaseDuration;
 
@@ -62,6 +77,10 @@ public sealed class DurableStackOptions
     public bool RetryJitterEnabled { get; set; }
 
     public double RetryJitterRatio { get; set; } = 0.2;
+
+    public bool PollJitterEnabled { get; set; }
+
+    public double PollJitterRatio { get; set; } = 0.2;
 
     public DurableStackOptions UseInMemory()
     {

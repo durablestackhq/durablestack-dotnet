@@ -8,6 +8,7 @@ using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
@@ -255,6 +256,94 @@ public sealed class ServiceCollectionExtensionsTests
 
         Assert.Equal(TimeSpan.FromSeconds(5), options.PollInterval);
         Assert.Equal(TimeSpan.FromSeconds(30), options.LeaseDuration);
+    }
+
+    [Fact]
+    public void AddDurableStack_defaults_claim_batch_size_concurrency_and_poll_jitter_settings()
+    {
+        var services = new ServiceCollection();
+        services.AddDurableStack();
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(5, options.ClaimBatchSize);
+        Assert.Equal(5, options.BatchSize);
+        Assert.Equal(5, options.MaxConcurrentRuns);
+        Assert.False(options.PollJitterEnabled);
+        Assert.Equal(0.2, options.PollJitterRatio);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_claim_batch_and_concurrency_to_defaults()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.ClaimBatchSize = 0;
+            options.MaxConcurrentRuns = -1;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(5, options.ClaimBatchSize);
+        Assert.Equal(5, options.MaxConcurrentRuns);
+    }
+
+    [Fact]
+    public void AddDurableStack_reverts_invalid_poll_jitter_ratio_to_default()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStack(options =>
+        {
+            options.PollJitterRatio = 2;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.Equal(0.2, options.PollJitterRatio);
+    }
+
+    [Fact]
+    public void AddDurableStackWithJitter_enables_poll_jitter_with_configure_only_overload()
+    {
+        var services = new ServiceCollection();
+
+        services.AddDurableStackWithJitter(0.4);
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.True(options.PollJitterEnabled);
+        Assert.Equal(0.4, options.PollJitterRatio);
+    }
+
+    [Fact]
+    public void AddDurableStackWithJitter_enables_poll_jitter_with_configuration_overload()
+    {
+        var services = new ServiceCollection();
+        var configuration = new ConfigurationBuilder().Build();
+
+        services.AddDurableStackWithJitter(0.35, configuration);
+
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<DurableStackOptions>();
+
+        Assert.True(options.PollJitterEnabled);
+        Assert.Equal(0.35, options.PollJitterRatio);
+    }
+
+    [Fact]
+    public void AddDurableStackWithJitter_throws_when_ratio_is_out_of_range()
+    {
+        var services = new ServiceCollection();
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => services.AddDurableStackWithJitter(-0.1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => services.AddDurableStackWithJitter(1.1));
     }
 
     [Fact]

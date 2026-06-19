@@ -33,6 +33,7 @@ public sealed class DurableStackEventFactory
             RunId = run?.Id,
             JobName = run?.JobName,
             Attempt = run?.Attempt,
+            MaxAttempts = run?.MaxAttempts,
             WorkerName = workerName ?? _options.WorkerName,
             TenantId = _options.Eventing.TenantId,
             Environment = _options.Eventing.Environment,

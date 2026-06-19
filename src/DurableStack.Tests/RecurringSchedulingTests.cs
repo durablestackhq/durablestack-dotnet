@@ -192,7 +192,48 @@ public sealed class RecurringSchedulingTests
     }
 
     [Fact]
-    public async Task Scheduler_materializes_multiple_when_active_run_exists_and_concurrency_enabled()
+    public async Task Scheduler_materializes_multiple_when_only_leased_run_exists_and_concurrency_enabled()
+    {
+        var store = new InMemoryJobStore();
+        var options = new DurableStackOptions
+        {
+            Recurring =
+            {
+                CatchUpPolicy = RecurringCatchUpPolicy.CatchUp,
+            },
+        };
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "every-minute-job",
+                JobType = typeof(TestNoArgsJob),
+                MaxAttempts = 3,
+                CronExpression = "* * * * *",
+                TimeZone = "UTC",
+                AllowConcurrentRuns = true,
+            },
+        });
+
+        var initializer = new RecurringJobInitializer(registry, store, options);
+        await initializer.InitializeAsync(CancellationToken.None);
+        await store.UpdateRecurringNextRunAsync("every-minute-job", DateTimeOffset.UtcNow.AddMinutes(-10), CancellationToken.None);
+
+        var scheduler = new RecurringJobScheduler(store, registry, options);
+        var createdFirst = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
+        var claimed = await store.ClaimDueRunsAsync("worker-a", 1, TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Single(claimed);
+        var createdSecond = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
+
+        Assert.Equal(1, createdFirst);
+        Assert.Equal(1, createdSecond);
+
+        var runs = await store.GetRunsByJobNameAsync("every-minute-job", 10, CancellationToken.None);
+        Assert.Equal(2, runs.Count);
+    }
+
+    [Fact]
+    public async Task Scheduler_does_not_materialize_second_run_when_pending_exists_and_concurrency_enabled()
     {
         var store = new InMemoryJobStore();
         var options = new DurableStackOptions
@@ -224,10 +265,11 @@ public sealed class RecurringSchedulingTests
         var createdSecond = await scheduler.MaterializeDueRunsAsync(CancellationToken.None);
 
         Assert.Equal(1, createdFirst);
-        Assert.Equal(1, createdSecond);
+        Assert.Equal(0, createdSecond);
 
         var runs = await store.GetRunsByJobNameAsync("every-minute-job", 10, CancellationToken.None);
-        Assert.Equal(2, runs.Count);
+        Assert.Single(runs);
+        Assert.Equal("pending", runs[0].Status);
     }
 
     [Fact]
