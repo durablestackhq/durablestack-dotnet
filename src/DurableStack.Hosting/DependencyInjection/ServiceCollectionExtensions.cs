@@ -302,11 +302,6 @@ public static class ServiceCollectionExtensions
         var options = new DurableStackOptions();
         configuration.GetSection("DurableStack").Bind(options);
 
-        if (string.IsNullOrWhiteSpace(options.Eventing.Environment))
-        {
-            options.Eventing.Environment = configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"];
-        }
-
         configure?.Invoke(options);
         return options;
     }

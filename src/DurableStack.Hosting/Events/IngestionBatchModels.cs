@@ -15,9 +15,6 @@ internal sealed class TelemetryBatchRequest
     [JsonPropertyName("serviceName")]
     public string? ServiceName { get; init; }
 
-    [JsonPropertyName("environmentName")]
-    public string? EnvironmentName { get; init; }
-
     [JsonPropertyName("events")]
     public required List<TelemetryEventDto> Events { get; init; }
 }

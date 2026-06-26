@@ -114,7 +114,6 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
             TenantId = _options.Eventing.TenantId,
             IdempotencyKey = idempotencyKey,
             ServiceName = _options.Eventing.ServiceName,
-            EnvironmentName = null,
             Events = BuildDtos(events),
         };
 

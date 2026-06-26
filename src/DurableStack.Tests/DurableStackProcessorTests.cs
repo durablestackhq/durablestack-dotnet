@@ -64,7 +64,6 @@ public sealed class DurableStackProcessorTests
         Assert.All(events.Events, e => Assert.Equal(DurableStackEventTypes.CurrentVersion, e.EventVersion));
         Assert.All(events.Events, e => Assert.NotEqual(Guid.Empty, e.EventId));
         Assert.All(events.Events, e => Assert.Equal("tenant-alpha", e.TenantId));
-        Assert.All(events.Events, e => Assert.Equal("test", e.Environment));
         Assert.All(events.Events, e => Assert.Equal("durable-stack-tests", e.ServiceName));
     }
 
@@ -377,7 +376,6 @@ public sealed class DurableStackProcessorTests
     private static DurableStackEventFactory BuildEventFactory(DurableStackOptions options)
     {
         options.Eventing.TenantId = "tenant-alpha";
-        options.Eventing.Environment = "test";
         options.Eventing.ServiceName = "durable-stack-tests";
         return new DurableStackEventFactory(options);
     }
