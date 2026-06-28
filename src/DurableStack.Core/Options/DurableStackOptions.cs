@@ -78,7 +78,7 @@ public sealed class DurableStackOptions
 
     public double RetryJitterRatio { get; set; } = 0.2;
 
-    public bool PollJitterEnabled { get; set; }
+    public bool PollJitterEnabled { get; set; } = true;
 
     public double PollJitterRatio { get; set; } = 0.2;
 

@@ -122,10 +122,12 @@ builder.Services.AddDurableStack(builder.Configuration, options =>
     options.WorkerName = workerName;
 });
 
-// Discoverable helper for distributed fairness tuning.
-builder.Services.AddDurableStackWithJitter(0.2, builder.Configuration, options =>
+// Poll jitter is enabled by default; customize ratio or disable explicitly if needed.
+builder.Services.AddDurableStack(builder.Configuration, options =>
 {
     options.WorkerName = workerName;
+    options.PollJitterRatio = 0.2;
+    // options.PollJitterEnabled = false;
 });
 ```
 
@@ -146,10 +148,11 @@ Optional worker tuning can be set in configuration:
 
 If these values are omitted, DurableStack uses defaults: `PollInterval=5s`, `ClaimBatchSize=5`, `MaxConcurrentRuns=5`, `LeaseDuration=30s`.
 
-Poll jitter is available for multi-worker deployments:
+Poll jitter settings for multi-worker deployments:
 
-- `PollJitterEnabled=false` by default
-- `PollJitterRatio=0.2` by default (used when jitter is enabled)
+- `PollJitterEnabled=true` by default
+- `PollJitterRatio=0.2` by default
+- `AddDurableStackWithJitter(...)` is deprecated; use `AddDurableStack(...)`
 
 ## Recommended Kubernetes worker profile
 
