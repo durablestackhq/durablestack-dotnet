@@ -314,6 +314,12 @@ public sealed class DurableStackProcessorTests
             processorA.ProcessOnceAsync(CancellationToken.None),
             processorB.ProcessOnceAsync(CancellationToken.None));
 
+        // ProcessOnceAsync schedules run execution asynchronously after claim.
+        // Drain in-flight runs so terminal status assertions are deterministic.
+        await Task.WhenAll(
+            processorA.DrainInFlightRunsAsync(CancellationToken.None),
+            processorB.DrainInFlightRunsAsync(CancellationToken.None));
+
         Assert.Equal(1, processed.Sum());
         Assert.Equal(1, AtomicCounterJob.ExecutionCount);
 
