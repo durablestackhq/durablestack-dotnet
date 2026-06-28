@@ -35,8 +35,8 @@ If these tuning values are omitted, defaults are `PollInterval=5s`, `ClaimBatchS
 
 Poll jitter is available for multi-worker deployments:
 
-- `PollJitterEnabled=false` by default
-- `PollJitterRatio=0.2` by default (used when jitter is enabled)
+- `PollJitterEnabled=true` by default
+- `PollJitterRatio=0.2` by default
 
 If your app uses a non-default connection string name, set `options.ConnectionStringName`.
 

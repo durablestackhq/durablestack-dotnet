@@ -62,6 +62,15 @@ builder.Services.UseDurableStackLoggingEventSink();
 
 This does not disable API ingestion when tenant credentials are configured.
 
+## API ingestion payload metadata
+
+When API ingestion is enabled, DurableStack includes runtime metadata on each event payload:
+
+- `runtime` runtime description (for .NET workers, from `RuntimeInformation.FrameworkDescription`)
+- `runtimeVersion` runtime version (for .NET workers, from `Environment.Version`)
+
+These fields are sent with each event so the observability API can store runtime context per worker event.
+
 ## Using a custom sink
 
 Implement `IDurableStackEventSink` and register it.

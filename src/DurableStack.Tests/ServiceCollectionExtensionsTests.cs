@@ -270,7 +270,7 @@ public sealed class ServiceCollectionExtensionsTests
         Assert.Equal(5, options.ClaimBatchSize);
         Assert.Equal(5, options.BatchSize);
         Assert.Equal(5, options.MaxConcurrentRuns);
-        Assert.False(options.PollJitterEnabled);
+        Assert.True(options.PollJitterEnabled);
         Assert.Equal(0.2, options.PollJitterRatio);
     }
 
@@ -313,7 +313,9 @@ public sealed class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
 
+#pragma warning disable CS0618
         services.AddDurableStackWithJitter(0.4);
+#pragma warning restore CS0618
 
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<DurableStackOptions>();
@@ -328,7 +330,9 @@ public sealed class ServiceCollectionExtensionsTests
         var services = new ServiceCollection();
         var configuration = new ConfigurationBuilder().Build();
 
+#pragma warning disable CS0618
         services.AddDurableStackWithJitter(0.35, configuration);
+#pragma warning restore CS0618
 
         using var provider = services.BuildServiceProvider();
         var options = provider.GetRequiredService<DurableStackOptions>();
@@ -342,8 +346,10 @@ public sealed class ServiceCollectionExtensionsTests
     {
         var services = new ServiceCollection();
 
+#pragma warning disable CS0618
         Assert.Throws<ArgumentOutOfRangeException>(() => services.AddDurableStackWithJitter(-0.1));
         Assert.Throws<ArgumentOutOfRangeException>(() => services.AddDurableStackWithJitter(1.1));
+#pragma warning restore CS0618
     }
 
     [Fact]

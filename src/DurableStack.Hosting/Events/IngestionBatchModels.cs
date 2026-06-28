@@ -45,6 +45,12 @@ internal sealed class TelemetryEventDto
     [JsonPropertyName("workerName")]
     public string? WorkerName { get; init; }
 
+    [JsonPropertyName("runtime")]
+    public string? Runtime { get; init; }
+
+    [JsonPropertyName("runtimeVersion")]
+    public string? RuntimeVersion { get; init; }
+
     [JsonPropertyName("durationMs")]
     public double? DurationMs { get; init; }
 
