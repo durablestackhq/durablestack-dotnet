@@ -4,12 +4,12 @@ Run durable background jobs in .NET using the database you already have.
 
 DurableStack provides recurring scheduling, retries, distributed execution, and worker observability without requiring Redis, RabbitMQ, or additional queue infrastructure.
 
-## Prerelease notice
+## Release candidate notice
 
-This repository ships the first .NET beta line (`0.1.*`).
+This repository ships the first `1.0.0-rc.*` line.
 
-- API may change before `1.0.0`.
-- Schema and runtime behavior may evolve during beta.
+- API is expected to stabilize for `1.0.0`.
+- Schema and runtime behavior should be validated in staging before production rollout.
 
 ## What works today
 
@@ -19,8 +19,8 @@ This repository ships the first .NET beta line (`0.1.*`).
 - Recurring jobs can be declared disabled at registration (`Enabled = false`).
 - Distributed-safe claiming, leasing, lease expiry reclaim, and heartbeat extension.
 - Retry and terminal failure transitions.
-- Poll jitter controls for multi-worker fairness (`PollJitterEnabled`, `PollJitterRatio`).
-- Discoverable jitter helper: `AddDurableStackWithJitter(...)`.
+- Poll jitter controls for multi-worker fairness (`PollJitterEnabled`, `PollJitterRatio`). Jitter is enabled by default.
+- Legacy jitter helper: `AddDurableStackWithJitter(...)` (deprecated; use `AddDurableStack(...)`).
 - Optional, hosted observability via https://app.durablestack.com
 - Startup-safe migrations for relational providers.
 - Query APIs for recent and status-filtered runs.
@@ -34,6 +34,11 @@ Supported providers in this .NET implementation:
 - MySQL
 - SQL Server
 - SQLite
+
+Supported target frameworks for published packages:
+
+- `net9.0`
+- `net10.0`
 
 ## Feature comparison
 
@@ -130,7 +135,7 @@ Recommended default for most apps: start with `DurableStack.Hosting`, then move 
 - Power-user mode: set `options.JobRegistration.AutoDiscoverJobsFromAssembly = false` and use explicit `AddDurableJob<...>(...)`
 - Startup sync behavior defaults: `ExistingJobBehavior=KeepDatabase`, `OrphanedJobBehavior=Disable`
 - Non-hosted/manual loops: call `provider.InitializeDurableStackAsync(...)` once; hosted apps already initialize automatically
-- Multi-worker helper: `AddDurableStackWithJitter(0.2, ...)` enables poll jitter for better workload distribution
+- Poll jitter is on by default; tune with `PollJitterRatio` (default `0.2`) or set `PollJitterEnabled=false` to disable
 
 ## Project metadata
 

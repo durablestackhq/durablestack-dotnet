@@ -1,8 +1,10 @@
-# DurableStack (Prerelease)
+# DurableStack (Release Candidate)
 
-Early prerelease package for DurableStack. API may change before 1.0.
+Release candidate package for DurableStack ahead of 1.0.0 GA.
 
 DurableStack provides durable background and scheduled jobs backed by relational databases.
+
+Supported target frameworks: `net9.0`, `net10.0`.
 
 ## Package selection
 

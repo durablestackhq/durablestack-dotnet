@@ -36,7 +36,6 @@ public sealed class DurableStackEventFactory
             MaxAttempts = run?.MaxAttempts,
             WorkerName = workerName ?? _options.WorkerName,
             TenantId = _options.Eventing.TenantId,
-            Environment = _options.Eventing.Environment,
             ServiceName = _options.Eventing.ServiceName,
             TraceId = activity?.TraceId.ToString(),
             SpanId = activity?.SpanId.ToString(),
