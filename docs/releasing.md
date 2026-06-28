@@ -16,7 +16,24 @@ Packable projects:
 
 ## Version update
 
-Update `<VersionSuffix>` in all seven packable `.csproj` files.
+For release candidates:
+
+- set `<VersionPrefix>` to `1.0.0`
+- set `<VersionSuffix>` to `rc.<n>` (for example, `rc.1`)
+
+For GA:
+
+- keep `<VersionPrefix>` at `1.0.0`
+- remove `<VersionSuffix>`
+
+Ensure all seven packable `.csproj` files use the same version values.
+
+## Target frameworks
+
+Packable projects should target both:
+
+- `net9.0`
+- `net10.0`
 
 ## Validation
 
@@ -25,6 +42,8 @@ Run:
 ```bash
 dotnet build DurableStack.sln
 dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj
+dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj -f net9.0
+dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj -f net10.0
 ```
 
 Additionally, run provider integration tests against real databases before stable releases:
@@ -52,6 +71,12 @@ dotnet pack src/DurableStack.Postgres/DurableStack.Postgres.csproj -c Release -o
 dotnet pack src/DurableStack.MySql/DurableStack.MySql.csproj -c Release -o artifacts/nuget/<version>
 dotnet pack src/DurableStack.SqlServer/DurableStack.SqlServer.csproj -c Release -o artifacts/nuget/<version>
 dotnet pack src/DurableStack.Sqlite/DurableStack.Sqlite.csproj -c Release -o artifacts/nuget/<version>
+```
+
+Optional pre-push validation (inspect package metadata and target frameworks):
+
+```bash
+dotnet nuget list source
 ```
 
 ## Push
