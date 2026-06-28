@@ -9,6 +9,14 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dotnet-version: 9.0.x
+            target-framework: net9.0
+          - dotnet-version: 10.0.x
+            target-framework: net10.0
 
     steps:
       - name: Checkout
@@ -17,13 +25,24 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: ${{ matrix.dotnet-version }}
 
       - name: Restore
-        run: dotnet restore DurableStack.sln
+        run: dotnet restore DurableStack.sln -p:TargetFramework=${{ matrix.target-framework }}
 
       - name: Build
-        run: dotnet build DurableStack.sln --configuration Release --no-restore
+        run: dotnet build DurableStack.sln --configuration Release --no-restore -p:TargetFramework=${{ matrix.target-framework }}
 
       - name: Test
-        run: dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build --verbosity minimal
+        run: dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build --verbosity minimal -f ${{ matrix.target-framework }}
+
+      - name: Pack
+        if: matrix.dotnet-version == '10.0.x'
+        run: |
+          dotnet pack src/DurableStack.Core/DurableStack.Core.csproj -c Release -o artifacts/nuget
+          dotnet pack src/DurableStack.Hosting/DurableStack.Hosting.csproj -c Release -o artifacts/nuget
+          dotnet pack src/DurableStack.Worker/DurableStack.Worker.csproj -c Release -o artifacts/nuget
+          dotnet pack src/DurableStack.Postgres/DurableStack.Postgres.csproj -c Release -o artifacts/nuget
+          dotnet pack src/DurableStack.MySql/DurableStack.MySql.csproj -c Release -o artifacts/nuget
+          dotnet pack src/DurableStack.SqlServer/DurableStack.SqlServer.csproj -c Release -o artifacts/nuget
+          dotnet pack src/DurableStack.Sqlite/DurableStack.Sqlite.csproj -c Release -o artifacts/nuget

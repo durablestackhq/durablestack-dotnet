@@ -24,8 +24,6 @@ public sealed class DurableStackEvent
 
     public string? TenantId { get; init; }
 
-    public string? Environment { get; init; }
-
     public string? ServiceName { get; init; }
 
     public string? TraceId { get; init; }

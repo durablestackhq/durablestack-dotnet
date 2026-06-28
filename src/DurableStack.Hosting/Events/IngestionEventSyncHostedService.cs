@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using DurableStack.Core.Abstractions;
@@ -27,6 +28,8 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
     private readonly DurableStackOptions _options;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<IngestionEventSyncHostedService> _logger;
+    private readonly string _runtime;
+    private readonly string _runtimeVersion;
     private readonly Random _random = new();
     private int _sequence;
 
@@ -40,6 +43,8 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         _options = options;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _runtime = RuntimeInformation.FrameworkDescription;
+        _runtimeVersion = Environment.Version.ToString();
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -114,7 +119,6 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
             TenantId = _options.Eventing.TenantId,
             IdempotencyKey = idempotencyKey,
             ServiceName = _options.Eventing.ServiceName,
-            EnvironmentName = null,
             Events = BuildDtos(events),
         };
 
@@ -242,6 +246,8 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                 Attempt = evt.Attempt,
                 MaxAttempts = evt.MaxAttempts,
                 WorkerName = evt.WorkerName,
+                Runtime = _runtime,
+                RuntimeVersion = _runtimeVersion,
                 DurationMs = evt.DurationMs,
                 ErrorType = evt.ErrorType,
                 ErrorMessage = evt.Message,
@@ -267,6 +273,8 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                 EventVersion = latest.EventVersion,
                 OccurredAtUtc = latest.OccurredAtUtc,
                 WorkerName = latest.WorkerName,
+                Runtime = _runtime,
+                RuntimeVersion = _runtimeVersion,
                 PayloadJson = heartbeatPayload,
             });
         }

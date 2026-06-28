@@ -191,8 +191,7 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds DurableStack with poll jitter enabled to help spread job claiming load
-    /// across workers in distributed environments.
+    /// Adds DurableStack with explicit poll jitter settings.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="pollJitterRatio">
@@ -205,6 +204,7 @@ public static class ServiceCollectionExtensions
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="pollJitterRatio"/> is outside the range [0, 1].
     /// </exception>
+    [Obsolete("Poll jitter is enabled by default. Use AddDurableStack(...) and set PollJitterRatio if needed.")]
     public static IServiceCollection AddDurableStackWithJitter(
         this IServiceCollection services,
         double pollJitterRatio,
@@ -231,8 +231,7 @@ public static class ServiceCollectionExtensions
     }
 
     /// <summary>
-    /// Adds DurableStack with poll jitter enabled to help spread job claiming load
-    /// across workers in distributed environments.
+    /// Adds DurableStack with explicit poll jitter settings.
     /// </summary>
     /// <param name="services">The service collection.</param>
     /// <param name="pollJitterRatio">
@@ -244,6 +243,7 @@ public static class ServiceCollectionExtensions
     /// <exception cref="ArgumentOutOfRangeException">
     /// Thrown when <paramref name="pollJitterRatio"/> is outside the range [0, 1].
     /// </exception>
+    [Obsolete("Poll jitter is enabled by default. Use AddDurableStack(...) and set PollJitterRatio if needed.")]
     public static IServiceCollection AddDurableStackWithJitter(
         this IServiceCollection services,
         double pollJitterRatio,
@@ -301,11 +301,6 @@ public static class ServiceCollectionExtensions
     {
         var options = new DurableStackOptions();
         configuration.GetSection("DurableStack").Bind(options);
-
-        if (string.IsNullOrWhiteSpace(options.Eventing.Environment))
-        {
-            options.Eventing.Environment = configuration["ASPNETCORE_ENVIRONMENT"] ?? configuration["DOTNET_ENVIRONMENT"];
-        }
 
         configure?.Invoke(options);
         return options;
