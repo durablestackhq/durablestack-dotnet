@@ -15,8 +15,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Sqlite</PackageId>
-    <VersionPrefix>1.0.0</VersionPrefix>
-    <VersionSuffix>rc.1</VersionSuffix>
+    <VersionPrefix>1.0.1</VersionPrefix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>SQLite provider for DurableStack durable job storage and claiming.</Description>

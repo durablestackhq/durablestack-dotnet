@@ -18,12 +18,12 @@ Packable projects:
 
 For release candidates:
 
-- set `<VersionPrefix>` to `1.0.0`
+- set `<VersionPrefix>` to the target release (for example, `1.0.1`)
 - set `<VersionSuffix>` to `rc.<n>` (for example, `rc.1`)
 
 For GA:
 
-- keep `<VersionPrefix>` at `1.0.0`
+- set `<VersionPrefix>` to the target stable version (for example, `1.0.1`)
 - remove `<VersionSuffix>`
 
 Ensure all seven packable `.csproj` files use the same version values.

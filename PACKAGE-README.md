@@ -1,6 +1,6 @@
-# DurableStack (Release Candidate)
+# DurableStack
 
-Release candidate package for DurableStack ahead of 1.0.0 GA.
+Stable package for DurableStack.
 
 DurableStack provides durable background and scheduled jobs backed by relational databases.
 

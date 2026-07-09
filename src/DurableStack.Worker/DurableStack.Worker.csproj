@@ -12,8 +12,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Worker</PackageId>
-    <VersionPrefix>1.0.0</VersionPrefix>
-    <VersionSuffix>rc.1</VersionSuffix>
+    <VersionPrefix>1.0.1</VersionPrefix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>Worker service hosting integration for DurableStack durable jobs.</Description>
