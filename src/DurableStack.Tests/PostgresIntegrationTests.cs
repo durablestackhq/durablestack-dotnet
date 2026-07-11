@@ -55,7 +55,7 @@ public sealed class PostgresIntegrationTests
         Assert.Single(claimed);
 
         var retryAt = DateTimeOffset.UtcNow.AddMinutes(5);
-        await store.MarkFailedAsync(runId, new InvalidOperationException("boom"), retry: true, retryAtUtc: retryAt, cancellationToken: CancellationToken.None);
+        await store.MarkFailedAsync(runId, "worker-b", new InvalidOperationException("boom"), retry: true, retryAtUtc: retryAt, cancellationToken: CancellationToken.None);
 
         var run = await store.GetRunAsync(runId, CancellationToken.None);
         Assert.NotNull(run);

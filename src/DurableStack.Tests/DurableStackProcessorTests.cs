@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Execution;
 using DurableStack.Core.Events;
@@ -379,6 +380,194 @@ public sealed class DurableStackProcessorTests
         Assert.True(secondDelay.TotalSeconds >= 1.8);
     }
 
+    [Fact]
+    public async Task ProcessOnceAsync_sink_failure_on_success_event_does_not_mark_run_failed()
+    {
+        TestNoArgsJob.Executions.Clear();
+
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "no-args",
+                JobType = typeof(TestNoArgsJob),
+                MaxAttempts = 3,
+            },
+        });
+
+        var options = new DurableStackOptions
+        {
+            WorkerName = "test-worker",
+            ClaimBatchSize = 10,
+            LeaseDuration = TimeSpan.FromSeconds(10),
+            RetryDelay = TimeSpan.FromMilliseconds(50),
+        };
+        using var provider = BuildServiceProvider(new TestNoArgsJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
+        var throwingSink = new ThrowingEventSink(DurableStackEventTypes.JobSucceeded);
+        var events = new RecordingEventSink();
+        var eventFactory = BuildEventFactory(options);
+        var scheduler = new NoOpRecurringJobScheduler();
+
+        await store.EnqueueAsync("no-args", typeof(TestNoArgsJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
+
+        // The throwing sink comes first so a failure there must not skip later sinks.
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new IDurableStackEventSink[] { throwingSink, events }, eventFactory);
+        await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
+
+        Assert.Single(TestNoArgsJob.Executions);
+        var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
+        Assert.Equal("succeeded", run.Status);
+        Assert.Equal(1, run.Attempt);
+        Assert.Null(run.ErrorMessage);
+        Assert.Contains(events.Events, e => e.EventType == DurableStackEventTypes.JobSucceeded);
+        Assert.DoesNotContain(events.Events, e => e.EventType == DurableStackEventTypes.JobFailed);
+    }
+
+    [Fact]
+    public async Task ProcessOnceAsync_sink_failure_on_claimed_event_still_executes_all_claimed_runs()
+    {
+        AtomicCounterJob.ExecutionCount = 0;
+
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "atomic-counter",
+                JobType = typeof(AtomicCounterJob),
+                MaxAttempts = 3,
+            },
+        });
+
+        var options = new DurableStackOptions
+        {
+            WorkerName = "test-worker",
+            ClaimBatchSize = 10,
+            LeaseDuration = TimeSpan.FromSeconds(10),
+            RetryDelay = TimeSpan.FromMilliseconds(50),
+        };
+        using var provider = BuildServiceProvider(new AtomicCounterJob());
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
+        var throwingSink = new ThrowingEventSink(DurableStackEventTypes.JobClaimed);
+        var eventFactory = BuildEventFactory(options);
+        var scheduler = new NoOpRecurringJobScheduler();
+
+        for (var i = 0; i < 3; i++)
+        {
+            await store.EnqueueAsync("atomic-counter", typeof(AtomicCounterJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
+        }
+
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new IDurableStackEventSink[] { throwingSink }, eventFactory);
+        var processed = await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
+
+        Assert.Equal(3, processed);
+        Assert.Equal(3, AtomicCounterJob.ExecutionCount);
+        var runs = await store.GetRunsAsync(CancellationToken.None);
+        Assert.All(runs, run => Assert.Equal("succeeded", run.Status));
+    }
+
+    [Fact]
+    public async Task ProcessOnceAsync_shutdown_cancellation_leaves_run_leased_without_recording_failure()
+    {
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "block-until-cancelled",
+                JobType = typeof(BlockUntilCancelledJob),
+                MaxAttempts = 3,
+            },
+        });
+
+        var options = new DurableStackOptions
+        {
+            WorkerName = "test-worker",
+            ClaimBatchSize = 10,
+            LeaseDuration = TimeSpan.FromSeconds(10),
+            RetryDelay = TimeSpan.FromMilliseconds(50),
+        };
+        var job = new BlockUntilCancelledJob();
+        using var provider = BuildServiceProvider(job);
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
+        var events = new RecordingEventSink();
+        var eventFactory = BuildEventFactory(options);
+        var scheduler = new NoOpRecurringJobScheduler();
+
+        var runId = await store.EnqueueAsync("block-until-cancelled", typeof(BlockUntilCancelledJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
+
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
+        using var cts = new CancellationTokenSource();
+        await processor.ProcessOnceAsync(cts.Token);
+        await job.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        cts.Cancel();
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
+
+        var run = await store.GetRunAsync(runId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal("leased", run!.Status);
+        Assert.Equal(1, run.Attempt);
+        Assert.Null(run.ErrorMessage);
+        Assert.DoesNotContain(events.Events, e => e.EventType == DurableStackEventTypes.JobFailed);
+        Assert.DoesNotContain(events.Events, e => e.EventType == DurableStackEventTypes.JobRetried);
+    }
+
+    [Fact]
+    public async Task ProcessOnceAsync_fenced_success_write_does_not_overwrite_reclaimed_run()
+    {
+        var store = new InMemoryJobStore();
+        var registry = new DurableStackJobRegistry(new[]
+        {
+            new DurableJobRegistration
+            {
+                JobName = "block-until-released",
+                JobType = typeof(BlockUntilReleasedJob),
+                MaxAttempts = 3,
+            },
+        });
+
+        var options = new DurableStackOptions
+        {
+            WorkerName = "zombie-worker",
+            ClaimBatchSize = 10,
+            LeaseDuration = TimeSpan.FromMilliseconds(1),
+            RetryDelay = TimeSpan.FromMilliseconds(50),
+        };
+        var job = new BlockUntilReleasedJob();
+        using var provider = BuildServiceProvider(job);
+        var runner = new DefaultDurableJobRunner(provider, provider.GetRequiredService<IServiceScopeFactory>(), registry, options);
+        var events = new RecordingEventSink();
+        var eventFactory = BuildEventFactory(options);
+        var scheduler = new NoOpRecurringJobScheduler();
+
+        var runId = await store.EnqueueAsync("block-until-released", typeof(BlockUntilReleasedJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
+
+        var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
+        await processor.ProcessOnceAsync(CancellationToken.None);
+        await job.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        // The 1 ms lease has lapsed while the job is still executing; another worker reclaims the run.
+        await Task.Delay(20);
+        var stolen = await store.ClaimDueRunsAsync("thief-worker", 1, TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Single(stolen);
+
+        // The zombie worker finishes, but its fenced success write must not apply.
+        job.Release.TrySetResult();
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
+
+        var run = await store.GetRunAsync(runId, CancellationToken.None);
+        Assert.NotNull(run);
+        Assert.Equal("leased", run!.Status);
+        Assert.Equal("thief-worker", run.LeaseOwner);
+        Assert.Equal(2, run.Attempt);
+        Assert.DoesNotContain(events.Events, e => e.EventType == DurableStackEventTypes.JobSucceeded);
+    }
+
     private static DurableStackEventFactory BuildEventFactory(DurableStackOptions options)
     {
         options.Eventing.TenantId = "tenant-alpha";
@@ -413,6 +602,50 @@ public sealed class DurableStackProcessorTests
         public Task<int> MaterializeDueRunsAsync(CancellationToken cancellationToken)
         {
             return Task.FromResult(0);
+        }
+    }
+
+    private sealed class ThrowingEventSink : IDurableStackEventSink
+    {
+        private readonly string _eventTypeToThrowOn;
+
+        public ThrowingEventSink(string eventTypeToThrowOn)
+        {
+            _eventTypeToThrowOn = eventTypeToThrowOn;
+        }
+
+        public Task PublishAsync(DurableStackEvent @event, CancellationToken cancellationToken = default)
+        {
+            if (@event.EventType == _eventTypeToThrowOn)
+            {
+                throw new InvalidOperationException($"sink failure on {_eventTypeToThrowOn}");
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class BlockUntilCancelledJob : IDurableJob
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    }
+
+    private sealed class BlockUntilReleasedJob : IDurableJob
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
         }
     }
 }

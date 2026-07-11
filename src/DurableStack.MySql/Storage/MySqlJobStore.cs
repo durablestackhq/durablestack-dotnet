@@ -13,6 +13,9 @@ namespace DurableStack.MySql.Storage;
 
 public sealed class MySqlJobStore : IDurableJobStore
 {
+    private const string ExhaustedLeaseErrorMessage =
+        "Lease expired with no attempts remaining; the worker likely crashed during execution.";
+
     private readonly string _connectionString;
     private readonly string _jobsTableName;
     private readonly string _runsTableName;
@@ -161,17 +164,44 @@ public sealed class MySqlJobStore : IDurableJobStore
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
+        // Quarantine poison runs: a run whose lease expired with no attempts left
+        // (worker crashed mid-execution) is failed terminally instead of being
+        // reclaimed and crash-looping forever.
+        var reapSql = $"""
+            update {_runsTable}
+            set
+                status = 'failed',
+                completed_at_utc = UTC_TIMESTAMP(6),
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                error_detail = null,
+                updated_at_utc = UTC_TIMESTAMP(6)
+            where status = 'leased'
+              and lease_until_utc is not null
+              and lease_until_utc <= @now_utc
+              and attempt >= max_attempts;
+            """;
+
+        await using (var reap = new MySqlCommand(reapSql, connection, transaction))
+        {
+            reap.Parameters.AddWithValue("@error_message", ExhaustedLeaseErrorMessage);
+            reap.Parameters.AddWithValue("@now_utc", nowUtc.UtcDateTime);
+            await reap.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         var ids = new List<string>();
         var selectSql = $"""
             select id
             from {_runsTable}
-            where (
+            where attempt < max_attempts
+              and ((
                 status = 'pending'
                 and scheduled_for_utc <= @now_utc)
                or (
                 status = 'leased'
                 and lease_until_utc is not null
-                and lease_until_utc <= @now_utc)
+                and lease_until_utc <= @now_utc))
             order by scheduled_for_utc asc
             limit {limit}
             for update skip locked;
@@ -266,8 +296,10 @@ public sealed class MySqlJobStore : IDurableJobStore
         return claimed;
     }
 
-    public async Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken)
+    public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
+        // Fenced write: only the current lease owner may record the outcome, so a
+        // worker whose lease was reclaimed cannot overwrite the new owner's state.
         var sql = $"""
             update {_runsTable}
             set
@@ -278,13 +310,17 @@ public sealed class MySqlJobStore : IDurableJobStore
                 error_message = null,
                 error_detail = null,
                 updated_at_utc = UTC_TIMESTAMP(6)
-            where id = @id;
+            where id = @id
+              and status = 'leased'
+              and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(
+        var affected = await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
-            new MySqlParameter("@id", runId.ToString()));
+            new MySqlParameter("@id", runId.ToString()),
+            new MySqlParameter("@worker_name", workerName));
+        return affected > 0;
     }
 
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -311,8 +347,9 @@ public sealed class MySqlJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-    public async Task MarkFailedAsync(
+    public async Task<bool> MarkFailedAsync(
         Guid runId,
+        string workerName,
         Exception exception,
         bool retry,
         DateTimeOffset? retryAtUtc,
@@ -334,12 +371,15 @@ public sealed class MySqlJobStore : IDurableJobStore
                     error_detail = @error_detail,
                     completed_at_utc = null,
                     updated_at_utc = UTC_TIMESTAMP(6)
-                where id = @id;
+                where id = @id
+                  and status = 'leased'
+                  and lease_owner = @worker_name;
                 """;
 
             parameters =
             [
                 new MySqlParameter("@id", runId.ToString()),
+                new MySqlParameter("@worker_name", workerName),
                 new MySqlParameter("@retry_at_utc", retryAtUtc.Value.UtcDateTime),
                 new MySqlParameter("@error_message", exception.Message),
                 new MySqlParameter("@error_detail", exception.ToString()),
@@ -357,18 +397,22 @@ public sealed class MySqlJobStore : IDurableJobStore
                     error_message = @error_message,
                     error_detail = @error_detail,
                     updated_at_utc = UTC_TIMESTAMP(6)
-                where id = @id;
+                where id = @id
+                  and status = 'leased'
+                  and lease_owner = @worker_name;
                 """;
 
             parameters =
             [
                 new MySqlParameter("@id", runId.ToString()),
+                new MySqlParameter("@worker_name", workerName),
                 new MySqlParameter("@error_message", exception.Message),
                 new MySqlParameter("@error_detail", exception.ToString()),
             ];
         }
 
-        await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        var affected = await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        return affected > 0;
     }
 
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -992,7 +1036,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         }
     }
 
-    public async Task ExtendLeaseAsync(
+    public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
         TimeSpan leaseDuration,
@@ -1010,12 +1054,13 @@ public sealed class MySqlJobStore : IDurableJobStore
               and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(
+        var affected = await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
             new MySqlParameter("@lease_until_utc", leaseUntilUtc.UtcDateTime),
             new MySqlParameter("@id", runId.ToString()),
             new MySqlParameter("@worker_name", workerName));
+        return affected > 0;
     }
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
@@ -1024,7 +1069,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         await ExecuteNonQueryAsync(migrationSql, cancellationToken);
     }
 
-    private async Task ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params MySqlParameter[] parameters)
+    private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params MySqlParameter[] parameters)
     {
         await using var connection = new MySqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -1035,7 +1080,7 @@ public sealed class MySqlJobStore : IDurableJobStore
             command.Parameters.AddRange(parameters);
         }
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static JobRunRecord MapRun(MySqlDataReader reader)

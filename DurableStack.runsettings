@@ -2,11 +2,13 @@
 <RunSettings>
   <RunConfiguration>
     <EnvironmentVariables>
-	  <!--
+      <!--
+      To run the database integration tests, set the connection string via an
+      environment variable (never commit real credentials):
       <DURABLESTACK_TEST_POSTGRES>
         Host=localhost;Port=5432;Database=durable_stack;Username=postgres;Password=YOUR_LOCAL_PASSWORD
       </DURABLESTACK_TEST_POSTGRES>
-	  -->
+      -->
 
       <ASPNETCORE_ENVIRONMENT>Development</ASPNETCORE_ENVIRONMENT>
     </EnvironmentVariables>

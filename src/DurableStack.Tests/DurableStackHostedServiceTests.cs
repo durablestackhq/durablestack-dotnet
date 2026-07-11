@@ -1,9 +1,84 @@
+using DurableStack.Core.Abstractions;
+using DurableStack.Core.Events;
+using DurableStack.Core.Execution;
+using DurableStack.Core.Options;
 using DurableStack.Hosting.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DurableStack.Tests;
 
 public sealed class DurableStackHostedServiceTests
 {
+    [Fact]
+    public async Task StopAsync_drains_in_flight_runs_before_cancelling_execution()
+    {
+        var processor = new FakeDrainableProcessor();
+        var options = new DurableStackOptions
+        {
+            WorkerName = "test-worker",
+            PollInterval = TimeSpan.FromMilliseconds(50),
+            ShutdownDrainTimeout = TimeSpan.FromSeconds(5),
+        };
+
+        var service = new DurableStackHostedService(
+            processor,
+            new NoOpDurableStackStoreMigrator(),
+            new NoOpRecurringJobInitializer(),
+            options,
+            Array.Empty<IDurableStackEventSink>(),
+            new DurableStackEventFactory(options),
+            NullLogger<DurableStackHostedService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        await processor.FirstPoll.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        await service.StopAsync(CancellationToken.None);
+
+        Assert.True(processor.DrainCalled);
+        // The drain window must run before execution is cancelled, and execution must be
+        // cancelled by the time shutdown completes.
+        Assert.False(processor.ExecutionTokenCancelledAtFirstDrain);
+        Assert.True(processor.CapturedExecutionToken.IsCancellationRequested);
+    }
+
+    private sealed class FakeDrainableProcessor : IDurableStackProcessor, IInFlightRunDrainer
+    {
+        private int _drainCalls;
+
+        public TaskCompletionSource FirstPoll { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public CancellationToken CapturedExecutionToken { get; private set; }
+
+        public bool DrainCalled => Volatile.Read(ref _drainCalls) > 0;
+
+        public bool ExecutionTokenCancelledAtFirstDrain { get; private set; }
+
+        public Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
+        {
+            CapturedExecutionToken = cancellationToken;
+            FirstPoll.TrySetResult();
+            return Task.FromResult(0);
+        }
+
+        public Task DrainInFlightRunsAsync(CancellationToken cancellationToken)
+        {
+            if (Interlocked.Increment(ref _drainCalls) == 1)
+            {
+                ExecutionTokenCancelledAtFirstDrain = CapturedExecutionToken.IsCancellationRequested;
+            }
+
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class NoOpRecurringJobInitializer : IRecurringJobInitializer
+    {
+        public Task InitializeAsync(CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+    }
+
     [Fact]
     public void ComputePollDelay_returns_poll_interval_when_jitter_disabled()
     {

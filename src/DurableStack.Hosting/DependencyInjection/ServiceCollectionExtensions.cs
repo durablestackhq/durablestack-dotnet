@@ -20,6 +20,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Hosting.DependencyInjection;
 
@@ -450,7 +451,8 @@ public static class ServiceCollectionExtensions
             new LeaseHeartbeatJobRunner(
                 provider.GetRequiredService<DefaultDurableJobRunner>(),
                 provider.GetRequiredService<IDurableJobStore>(),
-                provider.GetRequiredService<DurableStackOptions>()));
+                provider.GetRequiredService<DurableStackOptions>(),
+                provider.GetService<ILogger<LeaseHeartbeatJobRunner>>()));
         services.AddSingleton<IRecurringJobScheduler, RecurringJobScheduler>();
         services.AddSingleton<IRecurringJobInitializer, RecurringJobInitializer>();
         services.AddSingleton<IDurableScheduleAdminService, DurableScheduleAdminService>();

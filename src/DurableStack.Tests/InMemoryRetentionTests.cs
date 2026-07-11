@@ -26,16 +26,18 @@ public sealed class InMemoryRetentionTests
             maxAttempts: 3,
             CancellationToken.None);
 
+        // Scheduled in the future so the claim below leaves it pending.
         _ = await store.EnqueueAsync(
             "job-c",
             "job-c-type",
             payloadJson: null,
-            DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow.AddMinutes(5),
             maxAttempts: 3,
             CancellationToken.None);
 
-        await store.MarkSucceededAsync(succeededId, CancellationToken.None);
-        await store.MarkFailedAsync(failedId, new InvalidOperationException("boom"), retry: false, retryAtUtc: null, CancellationToken.None);
+        _ = await store.ClaimDueRunsAsync("retention-worker", 10, TimeSpan.FromMinutes(1), CancellationToken.None);
+        await store.MarkSucceededAsync(succeededId, "retention-worker", CancellationToken.None);
+        await store.MarkFailedAsync(failedId, "retention-worker", new InvalidOperationException("boom"), retry: false, retryAtUtc: null, CancellationToken.None);
 
         var cutoff = DateTimeOffset.UtcNow.AddMinutes(1);
 
@@ -73,7 +75,8 @@ public sealed class InMemoryRetentionTests
             maxAttempts: 3,
             CancellationToken.None);
 
-        await store.MarkSucceededAsync(runId, CancellationToken.None);
+        _ = await store.ClaimDueRunsAsync("retention-worker", 10, TimeSpan.FromMinutes(1), CancellationToken.None);
+        await store.MarkSucceededAsync(runId, "retention-worker", CancellationToken.None);
         _ = await store.PruneHistoricalRunsAsync(DateTimeOffset.UtcNow.AddMinutes(1), batchSize: 100, CancellationToken.None);
 
         var schedules = await store.GetRecurringJobsAsync(includeDisabled: true, CancellationToken.None);

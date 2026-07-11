@@ -54,8 +54,9 @@ public sealed class DurableJobRunQueryServiceTests
         var first = await store.EnqueueAsync("job-a", "job-type-a", payloadJson: null, DateTimeOffset.UtcNow, maxAttempts: 3, CancellationToken.None);
         var second = await store.EnqueueAsync("job-b", "job-type-b", payloadJson: null, DateTimeOffset.UtcNow, maxAttempts: 3, CancellationToken.None);
 
-        await store.MarkSucceededAsync(first, CancellationToken.None);
-        await store.MarkFailedAsync(second, new InvalidOperationException("boom"), retry: false, retryAtUtc: null, CancellationToken.None);
+        _ = await store.ClaimDueRunsAsync("query-worker", 10, TimeSpan.FromMinutes(1), CancellationToken.None);
+        await store.MarkSucceededAsync(first, "query-worker", CancellationToken.None);
+        await store.MarkFailedAsync(second, "query-worker", new InvalidOperationException("boom"), retry: false, retryAtUtc: null, CancellationToken.None);
 
         var succeeded = await query.GetRunsByStatusAsync("succeeded", 10, CancellationToken.None);
         var failed = await query.GetRunsByStatusAsync("failed", 10, CancellationToken.None);
