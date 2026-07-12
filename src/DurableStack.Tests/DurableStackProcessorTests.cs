@@ -44,13 +44,13 @@ public sealed class DurableStackProcessorTests
         var eventFactory = BuildEventFactory(options);
         var scheduler = new NoOpRecurringJobScheduler();
 
-        await store.EnqueueAsync("no-args", typeof(TestNoArgsJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
+        var runId = await store.EnqueueAsync("no-args", typeof(TestNoArgsJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
 
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         var processed = await processor.ProcessOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, processed);
-        Assert.Single(TestNoArgsJob.Executions);
+        Assert.Single(TestNoArgsJob.Executions, c => c.RunId == runId);
 
         var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
         Assert.Equal("succeeded", run.Status);
@@ -205,7 +205,7 @@ public sealed class DurableStackProcessorTests
         var processed = await processor.ProcessOnceAsync(CancellationToken.None);
 
         Assert.Equal(1, processed);
-        Assert.Single(TestNoArgsJob.Executions);
+        Assert.Single(TestNoArgsJob.Executions, c => c.RunId == runId && c.Attempt == 2);
 
         var run = await store.GetRunAsync(runId, CancellationToken.None);
         Assert.NotNull(run);
@@ -410,14 +410,14 @@ public sealed class DurableStackProcessorTests
         var eventFactory = BuildEventFactory(options);
         var scheduler = new NoOpRecurringJobScheduler();
 
-        await store.EnqueueAsync("no-args", typeof(TestNoArgsJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
+        var runId = await store.EnqueueAsync("no-args", typeof(TestNoArgsJob).Name, null, DateTimeOffset.UtcNow, 3, CancellationToken.None);
 
         // The throwing sink comes first so a failure there must not skip later sinks.
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new IDurableStackEventSink[] { throwingSink, events }, eventFactory);
         await processor.ProcessOnceAsync(CancellationToken.None);
         await processor.DrainInFlightRunsAsync(CancellationToken.None);
 
-        Assert.Single(TestNoArgsJob.Executions);
+        Assert.Single(TestNoArgsJob.Executions, c => c.RunId == runId);
         var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
         Assert.Equal("succeeded", run.Status);
         Assert.Equal(1, run.Attempt);
