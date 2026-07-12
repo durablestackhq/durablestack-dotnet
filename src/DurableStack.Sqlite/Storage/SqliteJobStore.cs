@@ -14,6 +14,9 @@ namespace DurableStack.Sqlite.Storage;
 
 public sealed class SqliteJobStore : IDurableJobStore
 {
+    private const string ExhaustedLeaseErrorMessage =
+        "Lease expired with no attempts remaining; the worker likely crashed during execution.";
+
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
@@ -160,17 +163,44 @@ public sealed class SqliteJobStore : IDurableJobStore
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
+        // Quarantine poison runs: a run whose lease expired with no attempts left
+        // (worker crashed mid-execution) is failed terminally instead of being
+        // reclaimed and crash-looping forever.
+        var reapSql = $"""
+            update {_runsTable}
+            set
+                status = 'failed',
+                completed_at_utc = @now_utc,
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                error_detail = null,
+                updated_at_utc = @now_utc
+            where status = 'leased'
+              and lease_until_utc is not null
+              and lease_until_utc <= @now_utc
+              and attempt >= max_attempts;
+            """;
+
+        await using (var reap = new SqliteCommand(reapSql, connection, transaction))
+        {
+            reap.Parameters.AddWithValue("@error_message", ExhaustedLeaseErrorMessage);
+            reap.Parameters.AddWithValue("@now_utc", ToDbTimestamp(nowUtc));
+            await reap.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         var ids = new List<string>();
         var selectSql = $"""
             select id
             from {_runsTable}
-            where (
+            where attempt < max_attempts
+              and ((
                 status = 'pending'
                 and scheduled_for_utc <= @now_utc)
                or (
                 status = 'leased'
                 and lease_until_utc is not null
-                and lease_until_utc <= @now_utc)
+                and lease_until_utc <= @now_utc))
             order by scheduled_for_utc asc
             limit @batch_size;
             """;
@@ -267,10 +297,12 @@ public sealed class SqliteJobStore : IDurableJobStore
         return claimed;
     }
 
-    public async Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken)
+    public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         var nowUtc = DateTimeOffset.UtcNow;
 
+        // Fenced write: only the current lease owner may record the outcome, so a
+        // worker whose lease was reclaimed cannot overwrite the new owner's state.
         var sql = $"""
             update {_runsTable}
             set
@@ -281,14 +313,18 @@ public sealed class SqliteJobStore : IDurableJobStore
                 error_message = null,
                 error_detail = null,
                 updated_at_utc = @now_utc
-            where id = @id;
+            where id = @id
+              and status = 'leased'
+              and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(
+        var affected = await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
             new SqliteParameter("@id", runId.ToString()),
+            new SqliteParameter("@worker_name", workerName),
             new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
+        return affected > 0;
     }
 
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -318,8 +354,9 @@ public sealed class SqliteJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-    public async Task MarkFailedAsync(
+    public async Task<bool> MarkFailedAsync(
         Guid runId,
+        string workerName,
         Exception exception,
         bool retry,
         DateTimeOffset? retryAtUtc,
@@ -342,12 +379,15 @@ public sealed class SqliteJobStore : IDurableJobStore
                     error_detail = @error_detail,
                     completed_at_utc = null,
                     updated_at_utc = @now_utc
-                where id = @id;
+                where id = @id
+                  and status = 'leased'
+                  and lease_owner = @worker_name;
                 """;
 
             parameters =
             [
                 new SqliteParameter("@id", runId.ToString()),
+                new SqliteParameter("@worker_name", workerName),
                 new SqliteParameter("@retry_at_utc", ToDbTimestamp(retryAtUtc.Value)),
                 new SqliteParameter("@error_message", exception.Message),
                 new SqliteParameter("@error_detail", exception.ToString()),
@@ -366,19 +406,23 @@ public sealed class SqliteJobStore : IDurableJobStore
                     error_message = @error_message,
                     error_detail = @error_detail,
                     updated_at_utc = @now_utc
-                where id = @id;
+                where id = @id
+                  and status = 'leased'
+                  and lease_owner = @worker_name;
                 """;
 
             parameters =
             [
                 new SqliteParameter("@id", runId.ToString()),
+                new SqliteParameter("@worker_name", workerName),
                 new SqliteParameter("@error_message", exception.Message),
                 new SqliteParameter("@error_detail", exception.ToString()),
                 new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)),
             ];
         }
 
-        await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        var affected = await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        return affected > 0;
     }
 
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -1020,7 +1064,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return true;
     }
 
-    public async Task ExtendLeaseAsync(
+    public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
         TimeSpan leaseDuration,
@@ -1039,13 +1083,14 @@ public sealed class SqliteJobStore : IDurableJobStore
               and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(
+        var affected = await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
             new SqliteParameter("@lease_until_utc", ToDbTimestamp(leaseUntilUtc)),
             new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)),
             new SqliteParameter("@id", runId.ToString()),
             new SqliteParameter("@worker_name", workerName));
+        return affected > 0;
     }
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
@@ -1055,7 +1100,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         await EnsureAllowConcurrentRunsColumnAsync(cancellationToken);
     }
 
-    private async Task ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqliteParameter[] parameters)
+    private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqliteParameter[] parameters)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -1066,7 +1111,7 @@ public sealed class SqliteJobStore : IDurableJobStore
             command.Parameters.AddRange(parameters);
         }
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static JobRunRecord MapRun(SqliteDataReader reader)

@@ -6,6 +6,7 @@ public sealed class DurableStackOptions
 {
     private static readonly TimeSpan DefaultPollInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultLeaseDuration = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan DefaultShutdownDrainTimeout = TimeSpan.FromSeconds(10);
     private const int DefaultClaimBatchSize = 5;
     private const int DefaultMaxConcurrentRuns = 5;
     private int _claimBatchSize = DefaultClaimBatchSize;
@@ -68,6 +69,18 @@ public sealed class DurableStackOptions
     {
         get => LeaseDuration.TotalSeconds;
         set => LeaseDuration = value > 0 ? TimeSpan.FromSeconds(value) : DefaultLeaseDuration;
+    }
+
+    /// <summary>
+    /// How long a stopping worker waits for in-flight runs to finish before cancelling them.
+    /// Keep this below <c>HostOptions.ShutdownTimeout</c> or the host will abort the drain first.
+    /// </summary>
+    public TimeSpan ShutdownDrainTimeout { get; set; } = DefaultShutdownDrainTimeout;
+
+    public double ShutdownDrainTimeoutSeconds
+    {
+        get => ShutdownDrainTimeout.TotalSeconds;
+        set => ShutdownDrainTimeout = value >= 0 ? TimeSpan.FromSeconds(value) : DefaultShutdownDrainTimeout;
     }
 
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(5);

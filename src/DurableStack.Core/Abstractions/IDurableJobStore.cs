@@ -22,12 +22,24 @@ public interface IDurableJobStore
         TimeSpan leaseDuration,
         CancellationToken cancellationToken);
 
-    Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken);
+    /// <summary>
+    /// Records a successful run outcome. The write is fenced: it only applies while
+    /// <paramref name="workerName"/> still holds the run's lease. Returns false when the
+    /// lease was lost (expired and reclaimed, or the run was cancelled), in which case
+    /// the run state is left untouched.
+    /// </summary>
+    Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken);
 
     Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken);
 
-    Task MarkFailedAsync(
+    /// <summary>
+    /// Records a failed run outcome. Fenced the same way as
+    /// <see cref="MarkSucceededAsync(Guid, string, CancellationToken)"/>: returns false and
+    /// leaves the run untouched when <paramref name="workerName"/> no longer holds the lease.
+    /// </summary>
+    Task<bool> MarkFailedAsync(
         Guid runId,
+        string workerName,
         Exception exception,
         bool retry,
         DateTimeOffset? retryAtUtc,
@@ -106,7 +118,12 @@ public interface IDurableJobStore
         DateTimeOffset nextRunAtUtc,
         CancellationToken cancellationToken);
 
-    Task ExtendLeaseAsync(
+    /// <summary>
+    /// Extends the lease on a run this worker owns. Returns false when the lease is no
+    /// longer held by <paramref name="workerName"/> — the caller should stop executing
+    /// the run, because another worker may have reclaimed it.
+    /// </summary>
+    Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
         TimeSpan leaseDuration,

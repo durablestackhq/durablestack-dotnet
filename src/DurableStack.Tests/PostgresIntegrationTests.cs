@@ -11,14 +11,10 @@ namespace DurableStack.Tests;
 
 public sealed class PostgresIntegrationTests
 {
-    [Fact]
+    [SkippableFact]
     public async Task ClaimDueRunsAsync_claims_run_once_across_multiple_workers()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_a_");
         var store = new PostgresJobStore(options);
@@ -36,14 +32,10 @@ public sealed class PostgresIntegrationTests
         Assert.Equal(1, totalClaimed);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MarkFailedAsync_with_retry_sets_pending_and_reschedules()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_b_");
         var store = new PostgresJobStore(options);
@@ -55,7 +47,7 @@ public sealed class PostgresIntegrationTests
         Assert.Single(claimed);
 
         var retryAt = DateTimeOffset.UtcNow.AddMinutes(5);
-        await store.MarkFailedAsync(runId, new InvalidOperationException("boom"), retry: true, retryAtUtc: retryAt, cancellationToken: CancellationToken.None);
+        await store.MarkFailedAsync(runId, "worker-b", new InvalidOperationException("boom"), retry: true, retryAtUtc: retryAt, cancellationToken: CancellationToken.None);
 
         var run = await store.GetRunAsync(runId, CancellationToken.None);
         Assert.NotNull(run);
@@ -63,14 +55,10 @@ public sealed class PostgresIntegrationTests
         Assert.True(run.ScheduledForUtc > DateTimeOffset.UtcNow.AddMinutes(4));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task TablePrefix_is_applied_and_lowercased_for_postgres()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "Acme_");
         var store = new PostgresJobStore(options);
@@ -80,16 +68,12 @@ public sealed class PostgresIntegrationTests
         Assert.True(exists);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task EnsureMigrationsAppliedAsync_creates_tables_when_missing()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
-        var prefix = $"it_mig_{Guid.NewGuid():N}_";
+        var prefix = $"mig_c_{Guid.NewGuid().ToString("N")[..8]}_";
         var options = CreateOptions(connectionString, prefix);
         var store = new PostgresJobStore(options);
 
@@ -100,16 +84,12 @@ public sealed class PostgresIntegrationTests
         Assert.True(await TableExistsAsync(connectionString, $"{prefix.ToLowerInvariant()}durable_stack_job_locks"));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task EnsureMigrationsAppliedAsync_is_idempotent_and_preserves_existing_runs()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
-        var prefix = $"it_mig_safe_{Guid.NewGuid():N}_";
+        var prefix = $"mig_i_{Guid.NewGuid().ToString("N")[..8]}_";
         var options = CreateOptions(connectionString, prefix);
         var store = new PostgresJobStore(options);
 
@@ -125,14 +105,10 @@ public sealed class PostgresIntegrationTests
         Assert.Single(claims);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ClaimDueRunsAsync_reclaims_expired_lease()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_lease_1_");
         var store = new PostgresJobStore(options);
@@ -152,14 +128,10 @@ public sealed class PostgresIntegrationTests
         Assert.Equal(2, secondClaim[0].Attempt);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Parallel_workers_execute_single_due_run_once_effectively()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_pw_1_");
         var store = new PostgresJobStore(options);
@@ -182,14 +154,10 @@ public sealed class PostgresIntegrationTests
         Assert.Equal(1, run.Attempt);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task TryMaterializeRecurringRunAsync_materializes_slot_once_across_concurrent_workers()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_rec_2_");
         var store = new PostgresJobStore(options);
@@ -242,15 +210,11 @@ public sealed class PostgresIntegrationTests
         };
     }
 
-    private static string? GetConnectionStringOrSkip()
+    private static string GetConnectionStringOrSkip()
     {
         var fromEnv = Environment.GetEnvironmentVariable("DURABLESTACK_TEST_POSTGRES");
-        if (!string.IsNullOrWhiteSpace(fromEnv))
-        {
-            return fromEnv.Trim();
-        }
-
-        return null;
+        Skip.If(string.IsNullOrWhiteSpace(fromEnv), "DURABLESTACK_TEST_POSTGRES is not set; set it to a PostgreSQL connection string to run this test.");
+        return fromEnv!.Trim();
     }
 
     private static async Task<bool> TableExistsAsync(string connectionString, string tableName)

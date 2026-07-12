@@ -12,6 +12,9 @@ namespace DurableStack.SqlServer.Storage;
 
 public sealed class SqlServerJobStore : IDurableJobStore
 {
+    private const string ExhaustedLeaseErrorMessage =
+        "Lease expired with no attempts remaining; the worker likely crashed during execution.";
+
     private readonly string _connectionString;
     private readonly string _jobsTableName;
     private readonly string _runsTableName;
@@ -83,7 +86,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             new SqlParameter("@job_name", jobName),
             new SqlParameter("@job_type", jobType),
             new SqlParameter("@payload_json", (object?)payloadJson ?? DBNull.Value),
-            new SqlParameter("@scheduled_for_utc", scheduledForUtc.UtcDateTime),
+            UtcDateTime2Parameter("@scheduled_for_utc", scheduledForUtc.UtcDateTime),
             new SqlParameter("@max_attempts", maxAttempts));
 
         return runId;
@@ -140,7 +143,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             new SqlParameter("@job_name", jobName),
             new SqlParameter("@job_type", jobType),
             new SqlParameter("@payload_json", (object?)payloadJson ?? DBNull.Value),
-            new SqlParameter("@scheduled_for_utc", scheduledForUtc.UtcDateTime),
+            UtcDateTime2Parameter("@scheduled_for_utc", scheduledForUtc.UtcDateTime),
             new SqlParameter("@max_attempts", maxAttempts),
         ]);
 
@@ -157,17 +160,37 @@ public sealed class SqlServerJobStore : IDurableJobStore
     {
         var leaseSeconds = Math.Max(1, (int)Math.Ceiling(leaseDuration.TotalSeconds));
 
+        // Quarantine poison runs: a run whose lease expired with no attempts left
+        // (worker crashed mid-execution) is failed terminally instead of being
+        // reclaimed and crash-looping forever.
+        var reapSql = $"""
+            update {_runsTable} with (rowlock, readpast)
+            set
+                status = N'failed',
+                completed_at_utc = SYSUTCDATETIME(),
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                error_detail = null,
+                updated_at_utc = SYSUTCDATETIME()
+            where status = N'leased'
+              and lease_until_utc is not null
+              and lease_until_utc <= SYSUTCDATETIME()
+              and attempt >= max_attempts;
+            """;
+
         var sql = $"""
             ;with due_runs as (
                 select top (@batch_size) id
                 from {_runsTable} with (updlock, readpast, rowlock)
-                where (
+                where attempt < max_attempts
+                  and ((
                     status = N'pending'
                     and scheduled_for_utc <= SYSUTCDATETIME())
                    or (
                     status = N'leased'
                     and lease_until_utc is not null
-                    and lease_until_utc <= SYSUTCDATETIME())
+                    and lease_until_utc <= SYSUTCDATETIME()))
                 order by scheduled_for_utc asc
             )
             update r
@@ -200,6 +223,13 @@ public sealed class SqlServerJobStore : IDurableJobStore
 
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
+
+        await using (var reapCommand = new SqlCommand(reapSql, connection))
+        {
+            reapCommand.Parameters.AddWithValue("@error_message", ExhaustedLeaseErrorMessage);
+            await reapCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddRange(
         [
@@ -217,8 +247,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
-    public async Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken)
+    public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
+        // Fenced write: only the current lease owner may record the outcome, so a
+        // worker whose lease was reclaimed cannot overwrite the new owner's state.
         var sql = $"""
             update {_runsTable}
             set
@@ -229,10 +261,17 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 error_message = null,
                 error_detail = null,
                 updated_at_utc = SYSUTCDATETIME()
-            where id = @id;
+            where id = @id
+              and status = N'leased'
+              and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(sql, cancellationToken, new SqlParameter("@id", runId));
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqlParameter("@id", runId),
+            new SqlParameter("@worker_name", workerName));
+        return affected > 0;
     }
 
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -259,8 +298,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-    public async Task MarkFailedAsync(
+    public async Task<bool> MarkFailedAsync(
         Guid runId,
+        string workerName,
         Exception exception,
         bool retry,
         DateTimeOffset? retryAtUtc,
@@ -282,13 +322,16 @@ public sealed class SqlServerJobStore : IDurableJobStore
                     error_detail = @error_detail,
                     completed_at_utc = null,
                     updated_at_utc = SYSUTCDATETIME()
-                where id = @id;
+                where id = @id
+                  and status = N'leased'
+                  and lease_owner = @worker_name;
                 """;
 
             parameters =
             [
                 new SqlParameter("@id", runId),
-                new SqlParameter("@retry_at_utc", retryAtUtc.Value.UtcDateTime),
+                new SqlParameter("@worker_name", workerName),
+                UtcDateTime2Parameter("@retry_at_utc", retryAtUtc.Value.UtcDateTime),
                 new SqlParameter("@error_message", exception.Message),
                 new SqlParameter("@error_detail", exception.ToString()),
             ];
@@ -305,18 +348,22 @@ public sealed class SqlServerJobStore : IDurableJobStore
                     error_message = @error_message,
                     error_detail = @error_detail,
                     updated_at_utc = SYSUTCDATETIME()
-                where id = @id;
+                where id = @id
+                  and status = N'leased'
+                  and lease_owner = @worker_name;
                 """;
 
             parameters =
             [
                 new SqlParameter("@id", runId),
+                new SqlParameter("@worker_name", workerName),
                 new SqlParameter("@error_message", exception.Message),
                 new SqlParameter("@error_detail", exception.ToString()),
             ];
         }
 
-        await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        var affected = await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        return affected > 0;
     }
 
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -630,7 +677,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@enabled", enabled);
-        command.Parameters.AddWithValue("@next_run_at_utc", (object?)nextRunAtUtc?.UtcDateTime ?? DBNull.Value);
+        command.Parameters.Add(UtcDateTime2Parameter("@next_run_at_utc", nextRunAtUtc?.UtcDateTime));
         command.Parameters.AddWithValue("@name", jobName);
 
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
@@ -659,7 +706,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@cron_expression", cronExpression);
         command.Parameters.AddWithValue("@time_zone", timeZone);
-        command.Parameters.AddWithValue("@next_run_at_utc", nextRunAtUtc.UtcDateTime);
+        command.Parameters.Add(UtcDateTime2Parameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
         command.Parameters.AddWithValue("@name", jobName);
 
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
@@ -689,7 +736,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
 
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@batch_size", Math.Max(1, batchSize));
-        command.Parameters.AddWithValue("@completed_before_utc", completedBeforeUtc.UtcDateTime);
+        command.Parameters.Add(UtcDateTime2Parameter("@completed_before_utc", completedBeforeUtc.UtcDateTime));
 
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -768,7 +815,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             new SqlParameter("@retry_behavior", (object?)ToRetryBehaviorValue(registration.RetryBehavior) ?? DBNull.Value),
             new SqlParameter("@retry_initial_delay_seconds", (object?)registration.RetryInitialDelaySeconds ?? DBNull.Value),
             new SqlParameter("@max_attempts", registration.MaxAttempts),
-            new SqlParameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
+            UtcDateTime2Parameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
 
     public async Task<IReadOnlyList<RecurringJobState>> GetDueRecurringJobsAsync(
@@ -801,7 +848,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@now_utc", nowUtc.UtcDateTime);
+        command.Parameters.Add(UtcDateTime2Parameter("@now_utc", nowUtc.UtcDateTime));
         command.Parameters.AddWithValue("@batch_size", batchSize);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
@@ -841,7 +888,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
-            new SqlParameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime),
+            UtcDateTime2Parameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime),
             new SqlParameter("@name", jobName));
     }
 
@@ -917,9 +964,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddRange(
         [
-            new SqlParameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime),
-            new SqlParameter("@scheduled_for_utc", recurring.NextRunAtUtc.UtcDateTime),
-            new SqlParameter("@expected_next_run_at_utc", recurring.NextRunAtUtc.UtcDateTime),
+            UtcDateTime2Parameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime),
+            UtcDateTime2Parameter("@scheduled_for_utc", recurring.NextRunAtUtc.UtcDateTime),
+            UtcDateTime2Parameter("@expected_next_run_at_utc", recurring.NextRunAtUtc.UtcDateTime),
             new SqlParameter("@name", recurring.JobName),
             new SqlParameter("@run_id", runId),
             new SqlParameter("@job_name", registration.JobName),
@@ -938,7 +985,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         }
     }
 
-    public async Task ExtendLeaseAsync(
+    public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
         TimeSpan leaseDuration,
@@ -956,12 +1003,13 @@ public sealed class SqlServerJobStore : IDurableJobStore
               and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(
+        var affected = await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
             new SqlParameter("@id", runId),
             new SqlParameter("@worker_name", workerName),
             new SqlParameter("@lease_seconds", leaseSeconds));
+        return affected > 0;
     }
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
@@ -970,7 +1018,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         await ExecuteNonQueryAsync(migrationSql, cancellationToken);
     }
 
-    private async Task ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqlParameter[] parameters)
+    private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqlParameter[] parameters)
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
@@ -981,7 +1029,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             command.Parameters.AddRange(parameters);
         }
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static JobRunRecord MapRun(SqlDataReader reader)
@@ -1015,6 +1063,16 @@ public sealed class SqlServerJobStore : IDurableJobStore
                 ? null
                 : reader.GetString(reader.GetOrdinal("error_message")),
         };
+    }
+
+    /// <summary>
+    /// Datetime parameters must be explicitly typed as datetime2: SqlClient infers the
+    /// legacy datetime type (1/300s precision) for System.DateTime values, which makes
+    /// equality comparisons against datetime2 columns fail for most timestamps.
+    /// </summary>
+    private static SqlParameter UtcDateTime2Parameter(string name, DateTime? value)
+    {
+        return new SqlParameter(name, SqlDbType.DateTime2) { Value = (object?)value ?? DBNull.Value };
     }
 
     private static DateTimeOffset AsUtcDateTimeOffset(SqlDataReader reader, string column)

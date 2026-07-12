@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -9,11 +10,13 @@ namespace DurableStack.Tests.TestSupport;
 
 internal sealed class TestNoArgsJob : IDurableJob
 {
-    public static readonly List<JobContext> Executions = new();
+    // Shared by test classes that xUnit runs in parallel — must be thread-safe, and
+    // assertions against it must be scoped to the asserting test's own run ids.
+    public static readonly ConcurrentQueue<JobContext> Executions = new();
 
     public Task ExecuteAsync(JobContext context, CancellationToken cancellationToken)
     {
-        Executions.Add(context);
+        Executions.Enqueue(context);
         return Task.CompletedTask;
     }
 }

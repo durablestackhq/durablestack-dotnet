@@ -18,6 +18,47 @@ jobs:
           - dotnet-version: 10.0.x
             target-framework: net10.0
 
+    # Real database services so the provider integration tests execute in CI
+    # instead of silently skipping. MySQL is Oracle MySQL (not MariaDB) on
+    # purpose: the two dialects differ and MySQL is what the provider targets.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: durablestack_ci
+          POSTGRES_DB: durable_stack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: durablestack_ci
+          MYSQL_DATABASE: durable_stack
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -pdurablestack_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "DurableStack_CI12345"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P DurableStack_CI12345 -C -Q 'SELECT 1' -b"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -34,6 +75,10 @@ jobs:
         run: dotnet build DurableStack.sln --configuration Release --no-restore -p:TargetFramework=${{ matrix.target-framework }}
 
       - name: Test
+        env:
+          DURABLESTACK_TEST_POSTGRES: "Host=localhost;Port=5432;Database=durable_stack;Username=postgres;Password=durablestack_ci"
+          DURABLESTACK_TEST_MYSQL: "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=durablestack_ci"
+          DURABLESTACK_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User ID=sa;Password=DurableStack_CI12345;TrustServerCertificate=True"
         run: dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build --verbosity minimal -f ${{ matrix.target-framework }}
 
       - name: Pack
@@ -46,3 +91,10 @@ jobs:
           dotnet pack src/DurableStack.MySql/DurableStack.MySql.csproj -c Release -o artifacts/nuget
           dotnet pack src/DurableStack.SqlServer/DurableStack.SqlServer.csproj -c Release -o artifacts/nuget
           dotnet pack src/DurableStack.Sqlite/DurableStack.Sqlite.csproj -c Release -o artifacts/nuget
+
+      - name: Upload packages
+        if: matrix.dotnet-version == '10.0.x'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/nuget/

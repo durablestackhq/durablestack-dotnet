@@ -9,7 +9,10 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\DurableStack.Hosting\DurableStack.Hosting.csproj" />
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" />
+    <!-- Per-TFM versions: CI restores the solution with -p:TargetFramework=net10.0,
+         where DurableStack.Hosting pulls Microsoft.Extensions 10.x. -->
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="9.0.0" Condition="'$(TargetFramework)' != 'net10.0'" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.0" Condition="'$(TargetFramework)' == 'net10.0'" />
   </ItemGroup>
 
 </Project>
