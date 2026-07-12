@@ -14,7 +14,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Postgres</PackageId>
-    <VersionPrefix>1.0.1</VersionPrefix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>PostgreSQL provider for DurableStack durable job storage and claiming.</Description>

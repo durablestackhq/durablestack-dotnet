@@ -15,7 +15,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.MySql</PackageId>
-    <VersionPrefix>1.0.1</VersionPrefix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>MySQL provider for DurableStack durable job storage and claiming.</Description>

@@ -1,0 +1,133 @@
+name: release
+
+# Publishes all seven packages to NuGet when a release tag is pushed.
+# The tag decides the version: pushing v1.1.0 publishes 1.1.0; pushing
+# v1.2.0-rc.1 publishes the 1.2.0-rc.1 prerelease.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: durablestack_ci
+          POSTGRES_DB: durable_stack
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: durablestack_ci
+          MYSQL_DATABASE: durable_stack
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h localhost -pdurablestack_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: "DurableStack_CI12345"
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P DurableStack_CI12345 -C -Q 'SELECT 1' -b"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Tag '$GITHUB_REF_NAME' is not a release tag (expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease)." >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $VERSION"
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore DurableStack.sln
+
+      - name: Build
+        run: >-
+          dotnet build DurableStack.sln
+          --configuration Release
+          --no-restore
+          -p:Version=${{ steps.version.outputs.version }}
+          -p:ContinuousIntegrationBuild=true
+
+      - name: Test
+        env:
+          DURABLESTACK_TEST_POSTGRES: "Host=localhost;Port=5432;Database=durable_stack;Username=postgres;Password=durablestack_ci"
+          DURABLESTACK_TEST_MYSQL: "Server=localhost;Port=3306;Database=durable_stack;User ID=root;Password=durablestack_ci"
+          DURABLESTACK_TEST_SQLSERVER: "Server=localhost,1433;Database=master;User ID=sa;Password=DurableStack_CI12345;TrustServerCertificate=True"
+        run: |
+          for tfm in net8.0 net9.0 net10.0; do
+            dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj --configuration Release --no-build --verbosity minimal -f "$tfm"
+          done
+
+      - name: Pack
+        run: |
+          for project in Core Hosting Worker Postgres MySql SqlServer Sqlite; do
+            dotnet pack "src/DurableStack.$project/DurableStack.$project.csproj" \
+              --configuration Release \
+              --no-build \
+              -p:Version=${{ steps.version.outputs.version }} \
+              -p:ContinuousIntegrationBuild=true \
+              -o artifacts/nuget
+          done
+          ls -l artifacts/nuget
+
+      - name: Push to NuGet
+        run: >-
+          dotnet nuget push "artifacts/nuget/*.nupkg"
+          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --source https://api.nuget.org/v3/index.json
+          --skip-duplicate
+
+      - name: Upload packages to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages-${{ steps.version.outputs.version }}
+          path: artifacts/nuget/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME"
+          artifacts/nuget/*.nupkg
+          --title "DurableStack ${{ steps.version.outputs.version }}"
+          --generate-notes
+          ${{ contains(steps.version.outputs.version, '-') && '--prerelease' || '' }}

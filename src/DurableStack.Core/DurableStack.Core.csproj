@@ -13,7 +13,6 @@
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.Core</PackageId>
-    <VersionPrefix>1.0.1</VersionPrefix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>DurableStack core abstractions, options, and execution pipeline for durable jobs.</Description>

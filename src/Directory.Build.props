@@ -1,0 +1,12 @@
+<Project>
+
+  <PropertyGroup>
+    <!--
+      Fallback version for local/dev builds only. Published package versions are
+      decided by the release tag: pushing tag vX.Y.Z runs the release workflow,
+      which overrides this with -p:Version=X.Y.Z. Do not hand-edit per project.
+    -->
+    <VersionPrefix>1.1.0</VersionPrefix>
+  </PropertyGroup>
+
+</Project>
