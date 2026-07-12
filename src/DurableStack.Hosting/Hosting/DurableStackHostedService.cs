@@ -54,16 +54,58 @@ public sealed class DurableStackHostedService : BackgroundService
             _options.MaxConcurrentRuns,
             _options.PollInterval.TotalMilliseconds);
 
+        // Runs execute on a token that stays live after stoppingToken fires, so in-flight
+        // jobs get a drain window on shutdown instead of being cancelled mid-execution.
+        using var executionCts = new CancellationTokenSource();
+
         var heartbeatTask = RunHeartbeatLoopAsync(stoppingToken);
-        var processingTask = RunProcessingLoopAsync(stoppingToken);
+        var processingTask = RunProcessingLoopAsync(stoppingToken, executionCts.Token);
 
         await Task.WhenAll(heartbeatTask, processingTask);
-        if (_inFlightRunDrainer is not null)
-        {
-            await _inFlightRunDrainer.DrainInFlightRunsAsync(stoppingToken);
-        }
+        await DrainInFlightRunsAsync(executionCts);
 
         _logger.LogInformation("DurableStack worker stopped.");
+    }
+
+    private async Task DrainInFlightRunsAsync(CancellationTokenSource executionCts)
+    {
+        if (_inFlightRunDrainer is null)
+        {
+            executionCts.Cancel();
+            return;
+        }
+
+        var drainTimeout = _options.ShutdownDrainTimeout;
+        if (drainTimeout > TimeSpan.Zero)
+        {
+            try
+            {
+                using var drainCts = new CancellationTokenSource(drainTimeout);
+                _logger.LogInformation(
+                    "DurableStack worker stopping; waiting up to {DrainTimeoutSeconds:0.#}s for in-flight runs to complete.",
+                    drainTimeout.TotalSeconds);
+                await _inFlightRunDrainer.DrainInFlightRunsAsync(drainCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning(
+                    "DurableStack shutdown drain timed out after {DrainTimeoutSeconds:0.#}s; cancelling remaining in-flight runs. They will be reclaimed after their leases expire.",
+                    drainTimeout.TotalSeconds);
+            }
+        }
+
+        executionCts.Cancel();
+
+        try
+        {
+            // Give cancelled runs a moment to observe cancellation and unwind.
+            using var abortCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            await _inFlightRunDrainer.DrainInFlightRunsAsync(abortCts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogError("DurableStack in-flight runs did not stop after cancellation; abandoning them.");
+        }
     }
 
     private async Task RunHeartbeatLoopAsync(CancellationToken stoppingToken)
@@ -88,20 +130,35 @@ public sealed class DurableStackHostedService : BackgroundService
                 _logger.LogError(ex, "DurableStack worker heartbeat failure.");
             }
 
-            await Task.Delay(_options.PollInterval, stoppingToken);
+            // Delay cancellation must exit the loop cleanly: an unhandled TaskCanceledException
+            // here would fault Task.WhenAll in ExecuteAsync and skip the shutdown drain.
+            try
+            {
+                await Task.Delay(_options.PollInterval, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
     }
 
-    private async Task RunProcessingLoopAsync(CancellationToken stoppingToken)
+    private async Task RunProcessingLoopAsync(CancellationToken stoppingToken, CancellationToken executionToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
+            Task<int>? pollTask = null;
             try
             {
-                await _processor.ProcessOnceAsync(stoppingToken);
+                // The poll runs on executionToken so runs it starts survive into the drain
+                // window; WaitAsync lets the loop exit promptly on shutdown even if the poll
+                // itself is stuck on a slow store call.
+                pollTask = _processor.ProcessOnceAsync(executionToken);
+                await pollTask.WaitAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
+                ObserveAbandonedPoll(pollTask);
                 break;
             }
             catch (Exception ex)
@@ -109,10 +166,26 @@ public sealed class DurableStackHostedService : BackgroundService
                 _logger.LogError(ex, "DurableStack worker processing loop failure.");
             }
 
-            await Task.Delay(
-                ComputePollDelay(_options.PollInterval, _options.PollJitterEnabled, _options.PollJitterRatio),
-                stoppingToken);
+            try
+            {
+                await Task.Delay(
+                    ComputePollDelay(_options.PollInterval, _options.PollJitterEnabled, _options.PollJitterRatio),
+                    stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
+    }
+
+    private static void ObserveAbandonedPoll(Task? pollTask)
+    {
+        _ = pollTask?.ContinueWith(
+            static t => _ = t.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     internal static TimeSpan ComputePollDelay(

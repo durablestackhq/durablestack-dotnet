@@ -208,8 +208,21 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
             DurableStackTelemetry.JobsStarted.Add(1);
 
             await _runner.RunAsync(run, cancellationToken);
-            await _store.MarkSucceededAsync(run.Id, cancellationToken);
+            var recorded = await _store.MarkSucceededAsync(run.Id, _options.WorkerName, cancellationToken);
             DurableStackTelemetry.JobsSucceeded.Add(1);
+
+            if (!recorded)
+            {
+                // Fenced out: the lease was reclaimed or the run was cancelled while this
+                // worker was executing. The current owner's state is authoritative, so no
+                // success event is emitted for this (duplicate) execution.
+                _logger?.LogWarning(
+                    "DurableStack run completed but this worker no longer held its lease; the outcome was not recorded. RunId={RunId} JobName={JobName} Attempt={Attempt}",
+                    run.Id,
+                    run.JobName,
+                    run.Attempt);
+                return;
+            }
 
             var duration = DateTimeOffset.UtcNow - startedAt;
 
@@ -220,13 +233,39 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
                     durationMs: duration.TotalMilliseconds),
                 cancellationToken);
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Worker shutdown, not a job failure: leave the run leased so another worker
+            // reclaims it after lease expiry instead of recording a spurious failed attempt
+            // (writing with the cancelled token would fail anyway on database stores).
+            _logger?.LogInformation(
+                "DurableStack run interrupted by worker shutdown; it will be reclaimed after its lease expires. RunId={RunId} JobName={JobName} Attempt={Attempt}",
+                run.Id,
+                run.JobName,
+                run.Attempt);
+            throw;
+        }
         catch (Exception ex)
         {
             var failedAt = DateTimeOffset.UtcNow;
             var shouldRetry = run.Attempt < run.MaxAttempts;
             DateTimeOffset? retryAt = shouldRetry ? DateTimeOffset.UtcNow.Add(CalculateRetryDelay(run)) : null;
-            await _store.MarkFailedAsync(run.Id, ex, shouldRetry, retryAt, cancellationToken);
+            var recorded = await _store.MarkFailedAsync(run.Id, _options.WorkerName, ex, shouldRetry, retryAt, cancellationToken);
             DurableStackTelemetry.JobsFailed.Add(1);
+
+            if (!recorded)
+            {
+                // Fenced out: the lease was reclaimed or the run was cancelled. Do not
+                // publish failure/retry events — the current owner's outcome is authoritative,
+                // and a stale retry event here would corrupt the run's timeline.
+                _logger?.LogWarning(
+                    ex,
+                    "DurableStack run failed on this worker but its lease was no longer held; the failure was not recorded. RunId={RunId} JobName={JobName} Attempt={Attempt}",
+                    run.Id,
+                    run.JobName,
+                    run.Attempt);
+                return;
+            }
 
             await PublishEventAsync(
                 _eventFactory.Create(
@@ -291,9 +330,27 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
 
     private async Task PublishEventAsync(DurableStackEvent @event, CancellationToken cancellationToken)
     {
+        // Sink failures must never influence run state: a sink that throws after
+        // MarkSucceededAsync would otherwise flip a completed run back to failed/retry.
         foreach (var sink in _eventSinks)
         {
-            await sink.PublishAsync(@event, cancellationToken);
+            try
+            {
+                await sink.PublishAsync(@event, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(
+                    ex,
+                    "DurableStack event sink threw; the event is dropped for this sink. SinkType={SinkType} EventType={EventType} RunId={RunId}",
+                    sink.GetType().FullName,
+                    @event.EventType,
+                    @event.RunId);
+            }
         }
     }
 }

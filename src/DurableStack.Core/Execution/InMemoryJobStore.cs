@@ -53,10 +53,30 @@ public sealed class InMemoryJobStore : IDurableJobStore
 
         lock (_gate)
         {
+            // Quarantine poison runs: a run whose lease expired with no attempts left
+            // (worker crashed mid-execution) is failed terminally instead of being
+            // reclaimed and crash-looping forever.
+            var exhausted = _runs.Values
+                .Where(run =>
+                    run.Status == "leased"
+                    && run.LeaseUntilUtc.HasValue
+                    && run.LeaseUntilUtc.Value <= now
+                    && run.Attempt >= run.MaxAttempts)
+                .ToList();
+            foreach (var run in exhausted)
+            {
+                run.Status = "failed";
+                run.CompletedAtUtc = now;
+                run.LeaseOwner = null;
+                run.LeaseUntilUtc = null;
+                run.ErrorMessage = "Lease expired with no attempts remaining; the worker likely crashed during execution.";
+            }
+
             var due = _runs.Values
                 .Where(run =>
-                    (run.Status == "pending" && run.ScheduledForUtc <= now)
-                    || (run.Status == "leased" && run.LeaseUntilUtc.HasValue && run.LeaseUntilUtc.Value <= now))
+                    run.Attempt < run.MaxAttempts
+                    && ((run.Status == "pending" && run.ScheduledForUtc <= now)
+                        || (run.Status == "leased" && run.LeaseUntilUtc.HasValue && run.LeaseUntilUtc.Value <= now)))
                 .OrderBy(run => run.ScheduledForUtc)
                 .Take(batchSize)
                 .ToList();
@@ -75,21 +95,22 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.FromResult<IReadOnlyList<JobRunRecord>>(claimed);
     }
 
-    public Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken)
+    public Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            if (_runs.TryGetValue(runId, out var run))
+            if (!HoldsLease(runId, workerName, out var run))
             {
-                run.Status = "succeeded";
-                run.CompletedAtUtc = DateTimeOffset.UtcNow;
-                run.LeaseOwner = null;
-                run.LeaseUntilUtc = null;
-                run.ErrorMessage = null;
+                return Task.FromResult(false);
             }
-        }
 
-        return Task.CompletedTask;
+            run.Status = "succeeded";
+            run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            run.LeaseOwner = null;
+            run.LeaseUntilUtc = null;
+            run.ErrorMessage = null;
+            return Task.FromResult(true);
+        }
     }
 
     public Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -115,8 +136,9 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
-    public Task MarkFailedAsync(
+    public Task<bool> MarkFailedAsync(
         Guid runId,
+        string workerName,
         Exception exception,
         bool retry,
         DateTimeOffset? retryAtUtc,
@@ -124,27 +146,45 @@ public sealed class InMemoryJobStore : IDurableJobStore
     {
         lock (_gate)
         {
-            if (_runs.TryGetValue(runId, out var run))
+            if (!HoldsLease(runId, workerName, out var run))
             {
-                run.ErrorMessage = exception.Message;
-                run.LeaseOwner = null;
-                run.LeaseUntilUtc = null;
-
-                if (retry && retryAtUtc.HasValue)
-                {
-                    run.Status = "pending";
-                    run.ScheduledForUtc = retryAtUtc.Value;
-                    run.CompletedAtUtc = null;
-                }
-                else
-                {
-                    run.Status = "failed";
-                    run.CompletedAtUtc = DateTimeOffset.UtcNow;
-                }
+                return Task.FromResult(false);
             }
+
+            run.ErrorMessage = exception.Message;
+            run.LeaseOwner = null;
+            run.LeaseUntilUtc = null;
+
+            if (retry && retryAtUtc.HasValue)
+            {
+                run.Status = "pending";
+                run.ScheduledForUtc = retryAtUtc.Value;
+                run.CompletedAtUtc = null;
+            }
+            else
+            {
+                run.Status = "failed";
+                run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            }
+
+            return Task.FromResult(true);
+        }
+    }
+
+    private bool HoldsLease(Guid runId, string workerName, out JobRunRecord run)
+    {
+        // Completion writes are fenced to the lease owner so a worker whose lease was
+        // reclaimed (or whose run was cancelled) cannot overwrite the new owner's state.
+        if (_runs.TryGetValue(runId, out var found)
+            && found.Status == "leased"
+            && string.Equals(found.LeaseOwner, workerName, StringComparison.Ordinal))
+        {
+            run = found;
+            return true;
         }
 
-        return Task.CompletedTask;
+        run = null!;
+        return false;
     }
 
     public Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -493,7 +533,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
-    public Task ExtendLeaseAsync(
+    public Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
         TimeSpan leaseDuration,
@@ -506,10 +546,11 @@ public sealed class InMemoryJobStore : IDurableJobStore
                 && string.Equals(run.LeaseOwner, workerName, StringComparison.Ordinal))
             {
                 run.LeaseUntilUtc = DateTimeOffset.UtcNow.Add(leaseDuration);
+                return Task.FromResult(true);
             }
-        }
 
-        return Task.CompletedTask;
+            return Task.FromResult(false);
+        }
     }
 
     private static JobRunRecord Clone(JobRunRecord source)

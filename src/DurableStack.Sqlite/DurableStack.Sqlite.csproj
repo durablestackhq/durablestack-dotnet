@@ -6,7 +6,10 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
-    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.17" />
+    <!-- Direct reference to override the SQLitePCLRaw floor pulled in by Microsoft.Data.Sqlite:
+         every 2.x version is vulnerable to GHSA-2m69-gcr7-jv3q; the fix line is 3.x. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 
   <PropertyGroup>

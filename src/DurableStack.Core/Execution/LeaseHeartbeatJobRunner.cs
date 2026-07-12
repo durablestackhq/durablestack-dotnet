@@ -5,6 +5,7 @@ using DurableStack.Core.Abstractions;
 using DurableStack.Core.Diagnostics;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
+using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Core.Execution;
 
@@ -13,12 +14,18 @@ public sealed class LeaseHeartbeatJobRunner : IDurableJobRunner
     private readonly IDurableJobRunner _inner;
     private readonly IDurableJobStore _store;
     private readonly DurableStackOptions _options;
+    private readonly ILogger<LeaseHeartbeatJobRunner>? _logger;
 
-    public LeaseHeartbeatJobRunner(IDurableJobRunner inner, IDurableJobStore store, DurableStackOptions options)
+    public LeaseHeartbeatJobRunner(
+        IDurableJobRunner inner,
+        IDurableJobStore store,
+        DurableStackOptions options,
+        ILogger<LeaseHeartbeatJobRunner>? logger = null)
     {
         _inner = inner;
         _store = store;
         _options = options;
+        _logger = logger;
     }
 
     public async Task RunAsync(JobRunRecord run, CancellationToken cancellationToken)
@@ -26,6 +33,14 @@ public sealed class LeaseHeartbeatJobRunner : IDurableJobRunner
         var heartbeatInterval = TimeSpan.FromMilliseconds(Math.Max(250, _options.LeaseDuration.TotalMilliseconds / 2));
         var stopSignal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        // The job runs on a linked token so that losing the lease (reclaimed by another
+        // worker, or the run was cancelled) stops the local execution instead of letting
+        // it race the new owner to completion.
+        using var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+
+        // The heartbeat task must never fault or cancel: it is awaited in the finally
+        // below, and an exception there would replace the job's own outcome — turning a
+        // successful run into a spurious failure/retry after the lease has already lapsed.
         var heartbeatTask = Task.Run(
             async () =>
             {
@@ -42,15 +57,40 @@ public sealed class LeaseHeartbeatJobRunner : IDurableJobRunner
                         break;
                     }
 
-                    await _store.ExtendLeaseAsync(run.Id, _options.WorkerName, _options.LeaseDuration, cancellationToken);
-                    DurableStackTelemetry.LeaseExtensions.Add(1);
+                    try
+                    {
+                        var extended = await _store.ExtendLeaseAsync(run.Id, _options.WorkerName, _options.LeaseDuration, cancellationToken);
+                        if (!extended)
+                        {
+                            _logger?.LogWarning(
+                                "DurableStack lease is no longer held by this worker; cancelling the local execution. RunId={RunId} JobName={JobName}",
+                                run.Id,
+                                run.JobName);
+                            executionCts.Cancel();
+                            break;
+                        }
+
+                        DurableStackTelemetry.LeaseExtensions.Add(1);
+                    }
+                    catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger?.LogWarning(
+                            ex,
+                            "DurableStack lease heartbeat failed; retrying at next heartbeat interval. RunId={RunId} JobName={JobName}",
+                            run.Id,
+                            run.JobName);
+                    }
                 }
             },
-            cancellationToken);
+            CancellationToken.None);
 
         try
         {
-            await _inner.RunAsync(run, cancellationToken);
+            await _inner.RunAsync(run, executionCts.Token);
         }
         finally
         {

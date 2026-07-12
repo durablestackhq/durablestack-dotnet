@@ -12,6 +12,9 @@ namespace DurableStack.Postgres.Storage;
 
 public sealed class PostgresJobStore : IDurableJobStore
 {
+    private const string ExhaustedLeaseErrorMessage =
+        "Lease expired with no attempts remaining; the worker likely crashed during execution.";
+
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
@@ -148,17 +151,37 @@ public sealed class PostgresJobStore : IDurableJobStore
         TimeSpan leaseDuration,
         CancellationToken cancellationToken)
     {
+        // Quarantine poison runs: a run whose lease expired with no attempts left
+        // (worker crashed mid-execution) is failed terminally instead of being
+        // reclaimed and crash-looping forever.
+        var reapSql = $"""
+            update {_runsTable}
+            set
+                status = 'failed',
+                completed_at_utc = now(),
+                lease_owner = null,
+                lease_until_utc = null,
+                error_message = @error_message,
+                error_detail = null,
+                updated_at_utc = now()
+            where status = 'leased'
+              and lease_until_utc is not null
+              and lease_until_utc <= now()
+              and attempt >= max_attempts;
+            """;
+
         var sql = $"""
             with due_runs as (
                 select id
                 from {_runsTable}
-                where (
+                where attempt < max_attempts
+                  and ((
                     status = 'pending'
                     and scheduled_for_utc <= now())
                    or (
                     status = 'leased'
                     and lease_until_utc is not null
-                    and lease_until_utc <= now())
+                    and lease_until_utc <= now()))
                 order by scheduled_for_utc asc
                 limit @batch_size
                 for update skip locked
@@ -196,6 +219,12 @@ public sealed class PostgresJobStore : IDurableJobStore
 
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
+        await using (var reapCommand = new NpgsqlCommand(reapSql, connection, transaction))
+        {
+            reapCommand.Parameters.AddWithValue("error_message", ExhaustedLeaseErrorMessage);
+            await reapCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("batch_size", batchSize);
         command.Parameters.AddWithValue("worker_name", workerName);
@@ -214,8 +243,10 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
-    public async Task MarkSucceededAsync(Guid runId, CancellationToken cancellationToken)
+    public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
+        // Fenced write: only the current lease owner may record the outcome, so a
+        // worker whose lease was reclaimed cannot overwrite the new owner's state.
         var sql = $"""
             update {_runsTable}
             set
@@ -226,10 +257,17 @@ public sealed class PostgresJobStore : IDurableJobStore
                 error_message = null,
                 error_detail = null,
                 updated_at_utc = now()
-            where id = @id;
+            where id = @id
+              and status = 'leased'
+              and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(sql, cancellationToken, new NpgsqlParameter("id", runId));
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new NpgsqlParameter("id", runId),
+            new NpgsqlParameter("worker_name", workerName));
+        return affected > 0;
     }
 
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -256,8 +294,9 @@ public sealed class PostgresJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
-    public async Task MarkFailedAsync(
+    public async Task<bool> MarkFailedAsync(
         Guid runId,
+        string workerName,
         Exception exception,
         bool retry,
         DateTimeOffset? retryAtUtc,
@@ -279,13 +318,16 @@ public sealed class PostgresJobStore : IDurableJobStore
                     error_detail = @error_detail,
                     completed_at_utc = null,
                     updated_at_utc = now()
-                where id = @id;
+                where id = @id
+                  and status = 'leased'
+                  and lease_owner = @worker_name;
                 """;
             sql = sql.Replace("{runs}", _runsTable, StringComparison.Ordinal);
 
             parameters =
             [
                 new NpgsqlParameter("id", runId),
+                new NpgsqlParameter("worker_name", workerName),
                 new NpgsqlParameter("retry_at_utc", retryAtUtc.Value.UtcDateTime),
                 new NpgsqlParameter("error_message", exception.Message),
                 new NpgsqlParameter("error_detail", exception.ToString()),
@@ -303,19 +345,23 @@ public sealed class PostgresJobStore : IDurableJobStore
                     error_message = @error_message,
                     error_detail = @error_detail,
                     updated_at_utc = now()
-                where id = @id;
+                where id = @id
+                  and status = 'leased'
+                  and lease_owner = @worker_name;
                 """;
             sql = sql.Replace("{runs}", _runsTable, StringComparison.Ordinal);
 
             parameters =
             [
                 new NpgsqlParameter("id", runId),
+                new NpgsqlParameter("worker_name", workerName),
                 new NpgsqlParameter("error_message", exception.Message),
                 new NpgsqlParameter("error_detail", exception.ToString()),
             ];
         }
 
-        await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        var affected = await ExecuteNonQueryAsync(sql, cancellationToken, parameters.ToArray());
+        return affected > 0;
     }
 
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
@@ -937,7 +983,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         }
     }
 
-    public async Task ExtendLeaseAsync(
+    public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
         TimeSpan leaseDuration,
@@ -953,22 +999,23 @@ public sealed class PostgresJobStore : IDurableJobStore
               and lease_owner = @worker_name;
             """;
 
-        await ExecuteNonQueryAsync(
+        var affected = await ExecuteNonQueryAsync(
             sql,
             cancellationToken,
             new NpgsqlParameter("id", runId),
             new NpgsqlParameter("worker_name", workerName),
             new NpgsqlParameter("lease_duration", leaseDuration));
+        return affected > 0;
     }
 
-    private async Task ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params NpgsqlParameter[] parameters)
+    private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params NpgsqlParameter[] parameters)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddRange(parameters);
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static JobRunRecord MapRun(NpgsqlDataReader reader)
