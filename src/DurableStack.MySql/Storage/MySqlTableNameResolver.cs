@@ -10,6 +10,7 @@ internal static class MySqlTableNameResolver
     private const string JobsBase = "durable_stack_jobs";
     private const string RunsBase = "durable_stack_job_runs";
     private const string LocksBase = "durable_stack_job_locks";
+    private const string MigrationsBase = "durable_stack_schema_migrations";
 
     public static string Jobs(DurableStackOptions options)
     {
@@ -24,6 +25,11 @@ internal static class MySqlTableNameResolver
     public static string Locks(DurableStackOptions options)
     {
         return Build(options.DatabaseTablePrefix, LocksBase);
+    }
+
+    public static string Migrations(DurableStackOptions options)
+    {
+        return Build(options.DatabaseTablePrefix, MigrationsBase);
     }
 
     private static string Build(string? prefix, string baseName)

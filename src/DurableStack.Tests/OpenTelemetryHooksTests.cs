@@ -220,7 +220,15 @@ public sealed class OpenTelemetryHooksTests
         await workerService.StartAsync(CancellationToken.None);
 
         await processor.WaitForFirstCallAsync();
-        await Task.Delay(250);
+
+        // Poll instead of asserting on a fixed window: a loaded test agent can starve
+        // the 50 ms flush loop well past any fixed delay.
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (handler.RequestCount < 1 && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
         var postsWhileBlocked = handler.RequestCount;
 
         processor.Release();

@@ -105,6 +105,28 @@ public sealed class MySqlIntegrationTests
     }
 
     [SkippableFact]
+    public async Task EnsureMigrationsAppliedAsync_is_safe_under_concurrent_startup()
+    {
+        var connectionString = GetConnectionStringOrSkip();
+
+        var prefix = $"migc_{Guid.NewGuid().ToString("N")[..8]}_";
+        var options = CreateOptions(connectionString, prefix);
+
+        var stores = Enumerable.Range(0, 5).Select(_ => new MySqlJobStore(options)).ToArray();
+        await Task.WhenAll(stores.Select(s => s.EnsureMigrationsAppliedAsync(CancellationToken.None)));
+
+        // The schema is usable and the migration was recorded exactly once.
+        await stores[0].EnqueueAsync("job-mig-c", "job-type-mig-c", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
+        Assert.Single(await stores[0].ClaimDueRunsAsync("worker-mig-c", 1, TimeSpan.FromSeconds(30), CancellationToken.None));
+
+        await using var connection = new MySqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new MySqlCommand($"select count(*) from {prefix}durable_stack_schema_migrations", connection);
+        var versions = Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal(1, versions);
+    }
+
+    [SkippableFact]
     public async Task ClaimDueRunsAsync_reclaims_expired_lease()
     {
         var connectionString = GetConnectionStringOrSkip();

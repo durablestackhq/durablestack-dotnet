@@ -22,6 +22,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
+
+    private const int CurrentSchemaVersion = 1;
 
     public SqlServerJobStore(DurableStackOptions options)
     {
@@ -40,6 +43,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         _jobsTable = Qualify(_jobsTableName);
         _runsTable = Qualify(_runsTableName);
         _locksTable = Qualify(_locksTableName);
+        _migrationsTable = Qualify(SqlServerTableNameResolver.Migrations(options));
     }
 
     public async Task<Guid> EnqueueAsync(
@@ -1014,8 +1018,85 @@ public sealed class SqlServerJobStore : IDurableJobStore
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await EnsureSchemaVersionTableAsync(connection, cancellationToken);
+        if (await GetSchemaVersionAsync(connection, null, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // sp_getapplock serializes concurrent workers booting at once; SQL Server DDL
+        // is transactional, so a mid-migration crash leaves no partial schema.
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        var lockSql = """
+            declare @result int;
+            exec @result = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 60000;
+            if @result < 0
+                throw 51000, 'Timed out acquiring the DurableStack migration lock.', 1;
+            """;
+        await using (var lockCommand = new SqlCommand(lockSql, connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue("@resource", $"durablestack_migration_{_runsTableName}");
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (await GetSchemaVersionAsync(connection, transaction, cancellationToken) < CurrentSchemaVersion)
+        {
+            await using (var migrate = new SqlCommand(BuildInitMigrationSql(), connection, transaction))
+            {
+                await migrate.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var record = new SqlCommand(
+                $"if not exists (select 1 from {_migrationsTable} where version = @version) insert into {_migrationsTable} (version, applied_at_utc) values (@version, SYSUTCDATETIME());",
+                connection,
+                transaction))
+            {
+                record.Parameters.AddWithValue("@version", CurrentSchemaVersion);
+                await record.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task EnsureSchemaVersionTableAsync(SqlConnection connection, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            if object_id(N'{_migrationsTable}', N'U') is null
+            begin
+                create table {_migrationsTable} (
+                    version int not null primary key,
+                    applied_at_utc datetime2(6) not null default SYSUTCDATETIME()
+                );
+            end
+            """;
+
+        try
+        {
+            await using var command = new SqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException ex) when (ex.Number is 2714)
+        {
+            // 2714: object already exists — another worker won the create race.
+        }
+    }
+
+    private async Task<int> GetSchemaVersionAsync(
+        SqlConnection connection,
+        SqlTransaction? transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand(
+            $"select coalesce(max(version), 0) from {_migrationsTable};",
+            connection,
+            transaction);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqlParameter[] parameters)

@@ -16,6 +16,8 @@ public sealed class MySqlJobStore : IDurableJobStore
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
+    private const int CurrentSchemaVersion = 1;
+
     private readonly string _connectionString;
     private readonly string _jobsTableName;
     private readonly string _runsTableName;
@@ -23,6 +25,7 @@ public sealed class MySqlJobStore : IDurableJobStore
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
     public MySqlJobStore(DurableStackOptions options)
     {
@@ -40,6 +43,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         _jobsTable = Quote(_jobsTableName);
         _runsTable = Quote(_runsTableName);
         _locksTable = Quote(_locksTableName);
+        _migrationsTable = Quote(MySqlTableNameResolver.Migrations(options));
     }
 
     public async Task<Guid> EnqueueAsync(
@@ -1080,25 +1084,79 @@ public sealed class MySqlJobStore : IDurableJobStore
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        // Statements run one at a time, tolerating "already exists"/"doesn't exist"
-        // errors, because MySQL (unlike MariaDB) has no IF [NOT] EXISTS support for
-        // CREATE INDEX / ADD COLUMN / DROP COLUMN.
         await using var connection = new MySqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        foreach (var statement in BuildInitMigrationStatements())
+        await ExecuteOnConnectionAsync(
+            connection,
+            $"create table if not exists {_migrationsTable} (version int primary key, applied_at_utc datetime(6) not null default (utc_timestamp(6)));",
+            cancellationToken);
+
+        if (await GetSchemaVersionAsync(connection, cancellationToken) >= CurrentSchemaVersion)
         {
-            await using var command = new MySqlCommand(statement, connection);
-            try
+            return;
+        }
+
+        // GET_LOCK serializes concurrent workers booting at once. MySQL DDL commits
+        // implicitly (no transactional DDL), so the statements themselves must stay
+        // individually idempotent: each runs one at a time, tolerating
+        // "already exists"/"doesn't exist" errors, because MySQL (unlike MariaDB) has
+        // no IF [NOT] EXISTS support for CREATE INDEX / ADD COLUMN / DROP COLUMN.
+        var lockName = $"durablestack_migration_{_runsTableName}";
+        await using (var lockCommand = new MySqlCommand("select get_lock(@name, 60);", connection))
+        {
+            lockCommand.Parameters.AddWithValue("@name", lockName);
+            var acquired = await lockCommand.ExecuteScalarAsync(cancellationToken);
+            if (Convert.ToInt32(acquired, System.Globalization.CultureInfo.InvariantCulture) != 1)
             {
-                await command.ExecuteNonQueryAsync(cancellationToken);
-            }
-            catch (MySqlException ex) when (ex.Number is 1060 or 1061 or 1091)
-            {
-                // 1060 duplicate column, 1061 duplicate index, 1091 can't drop (absent):
-                // the schema is already in the desired state for this statement.
+                throw new TimeoutException("Timed out acquiring the DurableStack migration lock.");
             }
         }
+
+        try
+        {
+            if (await GetSchemaVersionAsync(connection, cancellationToken) < CurrentSchemaVersion)
+            {
+                foreach (var statement in BuildInitMigrationStatements())
+                {
+                    await using var command = new MySqlCommand(statement, connection);
+                    try
+                    {
+                        await command.ExecuteNonQueryAsync(cancellationToken);
+                    }
+                    catch (MySqlException ex) when (ex.Number is 1060 or 1061 or 1091)
+                    {
+                        // 1060 duplicate column, 1061 duplicate index, 1091 can't drop
+                        // (absent): the schema is already in the desired state.
+                    }
+                }
+
+                await using var record = new MySqlCommand(
+                    $"insert ignore into {_migrationsTable} (version, applied_at_utc) values (@version, utc_timestamp(6));",
+                    connection);
+                record.Parameters.AddWithValue("@version", CurrentSchemaVersion);
+                await record.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+        finally
+        {
+            await using var releaseCommand = new MySqlCommand("select release_lock(@name);", connection);
+            releaseCommand.Parameters.AddWithValue("@name", lockName);
+            _ = await releaseCommand.ExecuteScalarAsync(CancellationToken.None);
+        }
+    }
+
+    private static async Task ExecuteOnConnectionAsync(MySqlConnection connection, string sql, CancellationToken cancellationToken)
+    {
+        await using var command = new MySqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<int> GetSchemaVersionAsync(MySqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new MySqlCommand($"select coalesce(max(version), 0) from {_migrationsTable};", connection);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params MySqlParameter[] parameters)

@@ -15,10 +15,13 @@ public sealed class PostgresJobStore : IDurableJobStore
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
+    private const int CurrentSchemaVersion = 1;
+
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
     public PostgresJobStore(DurableStackOptions options)
     {
@@ -33,6 +36,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         _jobsTable = PostgresTableNameResolver.Jobs(options);
         _runsTable = PostgresTableNameResolver.Runs(options);
         _locksTable = PostgresTableNameResolver.Locks(options);
+        _migrationsTable = PostgresTableNameResolver.Migrations(options);
     }
 
     public async Task<Guid> EnqueueAsync(
@@ -1122,8 +1126,92 @@ public sealed class PostgresJobStore : IDurableJobStore
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await EnsureSchemaVersionTableAsync(connection, cancellationToken);
+        if (await GetSchemaVersionAsync(connection, null, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // A transaction-scoped advisory lock serializes concurrent workers booting at
+        // once, and PostgreSQL's transactional DDL makes the migration atomic — a
+        // mid-migration crash leaves no partial schema.
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var lockCommand = new NpgsqlCommand("select pg_advisory_xact_lock(@key);", connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue("key", ComputeMigrationLockKey(_migrationsTable));
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (await GetSchemaVersionAsync(connection, transaction, cancellationToken) < CurrentSchemaVersion)
+        {
+            await using (var migrate = new NpgsqlCommand(BuildInitMigrationSql(), connection, transaction))
+            {
+                await migrate.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await using (var record = new NpgsqlCommand(
+                $"insert into {_migrationsTable} (version, applied_at_utc) values (@version, now()) on conflict (version) do nothing;",
+                connection,
+                transaction))
+            {
+                record.Parameters.AddWithValue("version", CurrentSchemaVersion);
+                await record.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task EnsureSchemaVersionTableAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            create table if not exists {_migrationsTable} (
+                version int primary key,
+                applied_at_utc timestamptz not null default now()
+            );
+            """;
+
+        try
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState is "23505" or "42P07")
+        {
+            // Concurrent CREATE TABLE IF NOT EXISTS can still race on the catalog
+            // (duplicate pg_type key / duplicate table); the table exists either way.
+        }
+    }
+
+    private async Task<int> GetSchemaVersionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            $"select coalesce(max(version), 0) from {_migrationsTable};",
+            connection,
+            transaction);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static long ComputeMigrationLockKey(string name)
+    {
+        // Stable FNV-1a 64-bit hash so every worker (and only workers sharing this
+        // table prefix) contends on the same advisory lock across processes.
+        var hash = 14695981039346656037UL;
+        foreach (var c in $"durablestack:{name}")
+        {
+            hash ^= c;
+            hash *= 1099511628211UL;
+        }
+
+        return unchecked((long)hash);
     }
 
     private string BuildInitMigrationSql()

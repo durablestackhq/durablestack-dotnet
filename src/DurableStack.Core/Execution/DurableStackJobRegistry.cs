@@ -148,6 +148,14 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         if (registration.IsRecurring)
         {
             _ = TimeZoneResolver.ResolveFromIana(registration.TimeZone);
+
+            // Fail fast on invalid cron expressions: an unparseable expression caught
+            // here surfaces at configuration time instead of stopping the host (or a
+            // deployed worker's scheduler) at startup.
+            _ = CronScheduleCalculator.GetNextOccurrenceUtc(
+                registration.CronExpression!,
+                registration.TimeZone,
+                DateTimeOffset.UtcNow);
         }
 
         if (_byName.ContainsKey(registration.JobName))

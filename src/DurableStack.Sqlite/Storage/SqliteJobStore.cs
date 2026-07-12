@@ -17,10 +17,13 @@ public sealed class SqliteJobStore : IDurableJobStore
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
+    private const int CurrentSchemaVersion = 1;
+
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
     public SqliteJobStore(DurableStackOptions options)
     {
@@ -35,6 +38,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         _jobsTable = Quote(SqliteTableNameResolver.Jobs(options));
         _runsTable = Quote(SqliteTableNameResolver.Runs(options));
         _locksTable = Quote(SqliteTableNameResolver.Locks(options));
+        _migrationsTable = Quote(SqliteTableNameResolver.Migrations(options));
     }
 
     public async Task<Guid> EnqueueAsync(
@@ -1095,9 +1099,59 @@ public sealed class SqliteJobStore : IDurableJobStore
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
-        await EnsureAllowConcurrentRunsColumnAsync(cancellationToken);
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using (var versionTable = new SqliteCommand(
+            $"create table if not exists {_migrationsTable} (version integer primary key, applied_at_utc text not null);",
+            connection))
+        {
+            await versionTable.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (await GetSchemaVersionAsync(connection, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // SQLite's single-writer transaction (BEGIN IMMEDIATE) serializes concurrent
+        // migrators, and its transactional DDL makes the migration atomic.
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        if (await GetSchemaVersionAsync(connection, cancellationToken, transaction) < CurrentSchemaVersion)
+        {
+            await using (var migrate = new SqliteCommand(BuildInitMigrationSql(), connection, transaction))
+            {
+                await migrate.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await EnsureAllowConcurrentRunsColumnAsync(connection, transaction, cancellationToken);
+
+            await using (var record = new SqliteCommand(
+                $"insert or ignore into {_migrationsTable} (version, applied_at_utc) values (@version, @applied_at_utc);",
+                connection,
+                transaction))
+            {
+                record.Parameters.AddWithValue("@version", CurrentSchemaVersion);
+                record.Parameters.AddWithValue("@applied_at_utc", ToDbTimestamp(DateTimeOffset.UtcNow));
+                await record.ExecuteNonQueryAsync(cancellationToken);
+            }
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task<int> GetSchemaVersionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
+    {
+        await using var command = new SqliteCommand(
+            $"select coalesce(max(version), 0) from {_migrationsTable};",
+            connection,
+            transaction);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqliteParameter[] parameters)
@@ -1278,44 +1332,44 @@ public sealed class SqliteJobStore : IDurableJobStore
         return sb.ToString();
     }
 
-    private async Task EnsureAllowConcurrentRunsColumnAsync(CancellationToken cancellationToken)
+    private async Task EnsureAllowConcurrentRunsColumnAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
-
-        if (!await HasColumnAsync(connection, "allow_concurrent_runs", cancellationToken))
+        if (!await HasColumnAsync(connection, transaction, "allow_concurrent_runs", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} add column allow_concurrent_runs integer not null default 0;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (!await HasColumnAsync(connection, "retry_behavior", cancellationToken))
+        if (!await HasColumnAsync(connection, transaction, "retry_behavior", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} add column retry_behavior text null;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (!await HasColumnAsync(connection, "retry_initial_delay_seconds", cancellationToken))
+        if (!await HasColumnAsync(connection, transaction, "retry_initial_delay_seconds", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} add column retry_initial_delay_seconds integer null;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (await HasColumnAsync(connection, "retry_backoff_seconds", cancellationToken))
+        if (await HasColumnAsync(connection, transaction, "retry_backoff_seconds", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} drop column retry_backoff_seconds;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 
-    private async Task<bool> HasColumnAsync(SqliteConnection connection, string columnName, CancellationToken cancellationToken)
+    private async Task<bool> HasColumnAsync(SqliteConnection connection, SqliteTransaction transaction, string columnName, CancellationToken cancellationToken)
     {
         var pragmaSql = $"PRAGMA table_info({_jobsTable});";
-        await using var pragma = new SqliteCommand(pragmaSql, connection);
+        await using var pragma = new SqliteCommand(pragmaSql, connection, transaction);
         await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
