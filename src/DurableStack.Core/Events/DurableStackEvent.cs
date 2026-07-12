@@ -36,6 +36,14 @@ public sealed class DurableStackEvent
 
     public string? ErrorType { get; init; }
 
+    /// <summary>
+    /// The exception message. Only populated when
+    /// <c>Eventing.IncludeErrorDetail</c> is enabled — exception messages routinely
+    /// contain sensitive values (connection details, file paths, business data), so
+    /// by default only <see cref="ErrorType"/> leaves the process.
+    /// </summary>
+    public string? ErrorMessage { get; init; }
+
     public string? ErrorDetail { get; init; }
 
     public string? Message { get; init; }

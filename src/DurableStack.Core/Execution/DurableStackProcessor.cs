@@ -271,8 +271,8 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
                 _eventFactory.Create(
                     DurableStackEventTypes.JobFailed,
                     run,
-                    ex.Message,
                     errorType: ex.GetType().FullName,
+                    errorMessage: ex.Message,
                     errorDetail: ex.ToString(),
                     retryAtUtc: retryAt,
                     durationMs: (failedAt - (run.StartedAtUtc ?? failedAt)).TotalMilliseconds),

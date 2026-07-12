@@ -30,6 +30,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
     private readonly ILogger<IngestionEventSyncHostedService> _logger;
     private readonly string _runtime;
     private readonly string _runtimeVersion;
+    private readonly Uri _ingestionBaseUri;
     private readonly Random _random = new();
     private int _sequence;
 
@@ -45,6 +46,29 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         _logger = logger;
         _runtime = RuntimeInformation.FrameworkDescription;
         _runtimeVersion = Environment.Version.ToString();
+        _ingestionBaseUri = ValidateIngestionBaseUrl(options.Eventing.IngestionApiBaseUrl);
+    }
+
+    private static Uri ValidateIngestionBaseUrl(string ingestionApiBaseUrl)
+    {
+        // Fail at startup rather than looping error logs at first flush, and refuse to
+        // send tenant credentials over cleartext HTTP (loopback excepted for local
+        // development against a dev ingestion endpoint).
+        if (!Uri.TryCreate(ingestionApiBaseUrl, UriKind.Absolute, out var uri))
+        {
+            throw new ArgumentException(
+                $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' is not a valid absolute URL.",
+                nameof(ingestionApiBaseUrl));
+        }
+
+        if (uri.Scheme != Uri.UriSchemeHttps && !uri.IsLoopback)
+        {
+            throw new ArgumentException(
+                $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' must use https (the ingestion request carries tenant credentials); http is only permitted for loopback addresses.",
+                nameof(ingestionApiBaseUrl));
+        }
+
+        return uri;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -145,8 +169,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
     private async Task<bool> PostWithRetryAsync(string payload, string idempotencyKey, int eventCount, CancellationToken cancellationToken)
     {
         using var client = _httpClientFactory.CreateClient(nameof(IngestionEventSyncHostedService));
-        var baseUri = new Uri(_options.Eventing.IngestionApiBaseUrl, UriKind.Absolute);
-        var endpoint = new Uri(baseUri, _options.Eventing.IngestionPath);
+        var endpoint = new Uri(_ingestionBaseUri, _options.Eventing.IngestionPath);
 
         var maxAttempts = Math.Clamp(_options.Eventing.IngestionMaxRetryAttempts, 1, 10);
 
@@ -250,7 +273,9 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                 RuntimeVersion = _runtimeVersion,
                 DurationMs = evt.DurationMs,
                 ErrorType = evt.ErrorType,
-                ErrorMessage = evt.Message,
+                // ErrorMessage is the redaction-gated exception message (null unless
+                // Eventing.IncludeErrorDetail is on); Message stays benign event text.
+                ErrorMessage = evt.ErrorMessage,
                 PayloadJson = BuildPayloadJson(evt),
             });
         }
@@ -288,6 +313,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         {
             ["message"] = evt.Message,
             ["errorType"] = evt.ErrorType,
+            ["errorMessage"] = evt.ErrorMessage,
             ["errorDetail"] = evt.ErrorDetail,
             ["durationMs"] = evt.DurationMs,
             ["retryAtUtc"] = evt.RetryAtUtc,

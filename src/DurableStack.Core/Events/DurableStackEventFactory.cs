@@ -21,10 +21,10 @@ public sealed class DurableStackEventFactory
         double? durationMs = null,
         DateTimeOffset? retryAtUtc = null,
         string? errorType = null,
+        string? errorMessage = null,
         string? errorDetail = null)
     {
         var activity = Activity.Current;
-        var sanitizedErrorDetail = SanitizeErrorDetail(errorDetail);
 
         return new DurableStackEvent
         {
@@ -42,16 +42,20 @@ public sealed class DurableStackEventFactory
             DurationMs = durationMs,
             RetryAtUtc = retryAtUtc,
             ErrorType = errorType,
-            ErrorDetail = sanitizedErrorDetail,
+            ErrorMessage = SanitizeSensitiveErrorText(errorMessage),
+            ErrorDetail = SanitizeSensitiveErrorText(errorDetail),
             Message = message,
         };
     }
 
-    private string? SanitizeErrorDetail(string? errorDetail)
+    private string? SanitizeSensitiveErrorText(string? text)
     {
-        if (string.IsNullOrWhiteSpace(errorDetail))
+        // Exception messages and stack traces routinely contain sensitive values
+        // (connection details, file paths, SQL fragments, business data). Unless the
+        // deployment opts in, only the exception type leaves the process.
+        if (string.IsNullOrWhiteSpace(text))
         {
-            return errorDetail;
+            return text;
         }
 
         if (!_options.Eventing.IncludeErrorDetail)
@@ -60,11 +64,11 @@ public sealed class DurableStackEventFactory
         }
 
         var maxLength = _options.Eventing.GetEffectiveMaxErrorDetailLength();
-        if (errorDetail.Length <= maxLength)
+        if (text.Length <= maxLength)
         {
-            return errorDetail;
+            return text;
         }
 
-        return errorDetail[..maxLength];
+        return text[..maxLength];
     }
 }
