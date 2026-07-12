@@ -11,14 +11,10 @@ namespace DurableStack.Tests;
 
 public sealed class MySqlIntegrationTests
 {
-    [Fact]
+    [SkippableFact]
     public async Task ClaimDueRunsAsync_claims_run_once_across_multiple_workers()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_a_");
         var store = new MySqlJobStore(options);
@@ -35,14 +31,10 @@ public sealed class MySqlIntegrationTests
         Assert.Equal(1, claims.Sum(x => x.Count));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task MarkFailedAsync_with_retry_sets_pending_and_reschedules()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_b_");
         var store = new MySqlJobStore(options);
@@ -62,14 +54,10 @@ public sealed class MySqlIntegrationTests
         Assert.True(run.ScheduledForUtc > DateTimeOffset.UtcNow.AddMinutes(4));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task TablePrefix_is_applied_and_preserves_case_for_mysql()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "Acme_");
         var store = new MySqlJobStore(options);
@@ -79,16 +67,12 @@ public sealed class MySqlIntegrationTests
         Assert.Equal("Acme_durable_stack_job_runs", tableName);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task EnsureMigrationsAppliedAsync_creates_tables_when_missing()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
-        var prefix = $"it_mig_{Guid.NewGuid():N}_";
+        var prefix = $"mig_c_{Guid.NewGuid().ToString("N")[..8]}_";
         var options = CreateOptions(connectionString, prefix);
         var store = new MySqlJobStore(options);
 
@@ -99,16 +83,12 @@ public sealed class MySqlIntegrationTests
         Assert.True(await TableExistsAsync(connectionString, $"{prefix}durable_stack_job_locks"));
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task EnsureMigrationsAppliedAsync_is_idempotent_and_preserves_existing_runs()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
-        var prefix = $"it_mig_safe_{Guid.NewGuid():N}_";
+        var prefix = $"mig_i_{Guid.NewGuid().ToString("N")[..8]}_";
         var options = CreateOptions(connectionString, prefix);
         var store = new MySqlJobStore(options);
 
@@ -124,14 +104,10 @@ public sealed class MySqlIntegrationTests
         Assert.Single(claims);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task ClaimDueRunsAsync_reclaims_expired_lease()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_lease_1_");
         var store = new MySqlJobStore(options);
@@ -151,14 +127,10 @@ public sealed class MySqlIntegrationTests
         Assert.Equal(2, secondClaim[0].Attempt);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task Parallel_workers_execute_single_due_run_once_effectively()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_pw_1_");
         var store = new MySqlJobStore(options);
@@ -181,14 +153,10 @@ public sealed class MySqlIntegrationTests
         Assert.Equal(1, run.Attempt);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task TryMaterializeRecurringRunAsync_materializes_slot_once_across_concurrent_workers()
     {
         var connectionString = GetConnectionStringOrSkip();
-        if (connectionString is null)
-        {
-            return;
-        }
 
         var options = CreateOptions(connectionString, prefix: "it_rec_2_");
         var store = new MySqlJobStore(options);
@@ -241,15 +209,11 @@ public sealed class MySqlIntegrationTests
         };
     }
 
-    private static string? GetConnectionStringOrSkip()
+    private static string GetConnectionStringOrSkip()
     {
         var fromEnv = Environment.GetEnvironmentVariable("DURABLESTACK_TEST_MYSQL");
-        if (!string.IsNullOrWhiteSpace(fromEnv))
-        {
-            return fromEnv.Trim();
-        }
-
-        return null;
+        Skip.If(string.IsNullOrWhiteSpace(fromEnv), "DURABLESTACK_TEST_MYSQL is not set; set it to a MySQL connection string to run this test.");
+        return fromEnv!.Trim();
     }
 
     private static async Task<string?> GetActualTableNameAsync(string connectionString, string tableName)

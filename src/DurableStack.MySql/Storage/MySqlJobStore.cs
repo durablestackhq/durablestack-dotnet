@@ -127,6 +127,7 @@ public sealed class MySqlJobStore : IDurableJobStore
                 @max_attempts,
                 UTC_TIMESTAMP(6),
                 UTC_TIMESTAMP(6)
+            from dual
             where not exists (
                 select 1
                 from {_runsTable}
@@ -213,7 +214,9 @@ public sealed class MySqlJobStore : IDurableJobStore
             await using var reader = await select.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                ids.Add(reader.GetString(0));
+                // GetGuid works under both MySqlConnector Guid mappings for char(36)
+                // (native Guid by default, string when GuidFormat=None).
+                ids.Add(reader.GetGuid(0).ToString());
             }
         }
 
@@ -945,6 +948,16 @@ public sealed class MySqlJobStore : IDurableJobStore
         await connection.OpenAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
 
+        // Serialize competing materializers on the schedule row before the guarded
+        // update below. Without this, two transactions interleave gap locks on the runs
+        // table (taken by the NOT EXISTS subquery) with the jobs-row lock and deadlock.
+        var lockSql = $"select id from {_jobsTable} where name = @name for update;";
+        await using (var lockCommand = new MySqlCommand(lockSql, connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue("@name", recurring.JobName);
+            _ = await lockCommand.ExecuteScalarAsync(cancellationToken);
+        }
+
         var updateSql = $"""
             update {_jobsTable}
             set
@@ -1029,8 +1042,10 @@ public sealed class MySqlJobStore : IDurableJobStore
             await transaction.CommitAsync(cancellationToken);
             return true;
         }
-        catch (MySqlException ex) when (ex.Number == 1062)
+        catch (MySqlException ex) when (ex.Number is 1062 or 1213)
         {
+            // 1062: another worker materialized the slot (unique index).
+            // 1213: deadlock victim — the competing worker wins the slot.
             await transaction.RollbackAsync(cancellationToken);
             return false;
         }
@@ -1065,8 +1080,25 @@ public sealed class MySqlJobStore : IDurableJobStore
 
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
+        // Statements run one at a time, tolerating "already exists"/"doesn't exist"
+        // errors, because MySQL (unlike MariaDB) has no IF [NOT] EXISTS support for
+        // CREATE INDEX / ADD COLUMN / DROP COLUMN.
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        foreach (var statement in BuildInitMigrationStatements())
+        {
+            await using var command = new MySqlCommand(statement, connection);
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (MySqlException ex) when (ex.Number is 1060 or 1061 or 1091)
+            {
+                // 1060 duplicate column, 1061 duplicate index, 1091 can't drop (absent):
+                // the schema is already in the desired state for this statement.
+            }
+        }
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params MySqlParameter[] parameters)
@@ -1087,7 +1119,7 @@ public sealed class MySqlJobStore : IDurableJobStore
     {
         return new JobRunRecord
         {
-            Id = Guid.Parse(reader.GetString(reader.GetOrdinal("id"))),
+            Id = reader.GetGuid(reader.GetOrdinal("id")),
             JobName = reader.GetString(reader.GetOrdinal("job_name")),
             JobType = reader.GetString(reader.GetOrdinal("job_type")),
             Status = reader.GetString(reader.GetOrdinal("status")),
@@ -1185,71 +1217,76 @@ public sealed class MySqlJobStore : IDurableJobStore
         return -1;
     }
 
-    private string BuildInitMigrationSql()
+    private IReadOnlyList<string> BuildInitMigrationStatements()
     {
-        var sb = new StringBuilder();
-
-        sb.AppendLine($"create table if not exists {_jobsTable} (");
-        sb.AppendLine("    id char(36) primary key,");
-        sb.AppendLine("    name varchar(256) not null unique,");
-        sb.AppendLine("    job_type varchar(2048) not null,");
-        sb.AppendLine("    schedule_type varchar(32) not null,");
-        sb.AppendLine("    cron_expression varchar(128) null,");
-        sb.AppendLine("    time_zone varchar(128) null,");
-        sb.AppendLine("    enabled tinyint(1) not null default 1,");
-        sb.AppendLine("    allow_concurrent_runs tinyint(1) not null default 0,");
-        sb.AppendLine("    retry_behavior varchar(32) null,");
-        sb.AppendLine("    retry_initial_delay_seconds int null,");
-        sb.AppendLine("    payload_json longtext null,");
-        sb.AppendLine("    max_attempts int not null default 3,");
-        sb.AppendLine("    next_run_at_utc datetime(6) null,");
-        sb.AppendLine("    last_run_at_utc datetime(6) null,");
-        sb.AppendLine("    created_at_utc datetime(6) not null default utc_timestamp(6),");
-        sb.AppendLine("    updated_at_utc datetime(6) not null default utc_timestamp(6)");
-        sb.AppendLine(");");
-
-        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_jobsTableName}_due")} on {_jobsTable} (enabled, schedule_type, next_run_at_utc);");
-        sb.AppendLine($"alter table {_jobsTable} add column if not exists allow_concurrent_runs tinyint(1) not null default 0;");
-        sb.AppendLine($"alter table {_jobsTable} add column if not exists retry_behavior varchar(32) null;");
-        sb.AppendLine($"alter table {_jobsTable} add column if not exists retry_initial_delay_seconds int null;");
-        sb.AppendLine($"alter table {_jobsTable} drop column if exists retry_backoff_seconds;");
-
-        sb.AppendLine($"create table if not exists {_runsTable} (");
-        sb.AppendLine("    id char(36) primary key,");
-        sb.AppendLine($"    job_id char(36) null references {_jobsTable}(id),");
-        sb.AppendLine("    job_name varchar(256) not null,");
-        sb.AppendLine("    job_type varchar(2048) not null,");
-        sb.AppendLine("    status varchar(32) not null,");
-        sb.AppendLine("    payload_json longtext null,");
-        sb.AppendLine("    scheduled_for_utc datetime(6) not null,");
-        sb.AppendLine("    schedule_slot_utc datetime(6) null,");
-        sb.AppendLine("    started_at_utc datetime(6) null,");
-        sb.AppendLine("    completed_at_utc datetime(6) null,");
-        sb.AppendLine("    attempt int not null default 0,");
-        sb.AppendLine("    max_attempts int not null default 3,");
-        sb.AppendLine("    lease_owner varchar(256) null,");
-        sb.AppendLine("    lease_until_utc datetime(6) null,");
-        sb.AppendLine("    error_message longtext null,");
-        sb.AppendLine("    error_detail longtext null,");
-        sb.AppendLine("    created_at_utc datetime(6) not null default utc_timestamp(6),");
-        sb.AppendLine("    updated_at_utc datetime(6) not null default utc_timestamp(6)");
-        sb.AppendLine(");");
-
-        sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc datetime(6) null;");
-        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_due")} on {_runsTable} (status, scheduled_for_utc);");
-        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_lease")} on {_runsTable} (lease_until_utc);");
-        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_job_name")} on {_runsTable} (job_name);");
-        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{_runsTableName}_completed")} on {_runsTable} (status, completed_at_utc);");
-        sb.AppendLine($"create unique index if not exists {QuoteIndex($"ix_{_runsTableName}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc);");
-
-        sb.AppendLine($"create table if not exists {_locksTable} (");
-        sb.AppendLine("    lock_key varchar(256) primary key,");
-        sb.AppendLine("    owner varchar(256) not null,");
-        sb.AppendLine("    lease_until_utc datetime(6) not null,");
-        sb.AppendLine("    updated_at_utc datetime(6) not null default utc_timestamp(6)");
-        sb.AppendLine(");");
-
-        return sb.ToString();
+        // Only syntax valid on both MySQL 8.x and MariaDB may be used here: expression
+        // defaults must be parenthesized, and IF [NOT] EXISTS is unavailable for
+        // CREATE INDEX / ADD COLUMN / DROP COLUMN (the executor tolerates the
+        // corresponding duplicate/absent errors instead).
+        return new[]
+        {
+            $"""
+            create table if not exists {_jobsTable} (
+                id char(36) primary key,
+                name varchar(256) not null unique,
+                job_type varchar(2048) not null,
+                schedule_type varchar(32) not null,
+                cron_expression varchar(128) null,
+                time_zone varchar(128) null,
+                enabled tinyint(1) not null default 1,
+                allow_concurrent_runs tinyint(1) not null default 0,
+                retry_behavior varchar(32) null,
+                retry_initial_delay_seconds int null,
+                payload_json longtext null,
+                max_attempts int not null default 3,
+                next_run_at_utc datetime(6) null,
+                last_run_at_utc datetime(6) null,
+                created_at_utc datetime(6) not null default (utc_timestamp(6)),
+                updated_at_utc datetime(6) not null default (utc_timestamp(6))
+            );
+            """,
+            $"create index {QuoteIndex($"ix_{_jobsTableName}_due")} on {_jobsTable} (enabled, schedule_type, next_run_at_utc);",
+            $"alter table {_jobsTable} add column allow_concurrent_runs tinyint(1) not null default 0;",
+            $"alter table {_jobsTable} add column retry_behavior varchar(32) null;",
+            $"alter table {_jobsTable} add column retry_initial_delay_seconds int null;",
+            $"alter table {_jobsTable} drop column retry_backoff_seconds;",
+            $"""
+            create table if not exists {_runsTable} (
+                id char(36) primary key,
+                job_id char(36) null references {_jobsTable}(id),
+                job_name varchar(256) not null,
+                job_type varchar(2048) not null,
+                status varchar(32) not null,
+                payload_json longtext null,
+                scheduled_for_utc datetime(6) not null,
+                schedule_slot_utc datetime(6) null,
+                started_at_utc datetime(6) null,
+                completed_at_utc datetime(6) null,
+                attempt int not null default 0,
+                max_attempts int not null default 3,
+                lease_owner varchar(256) null,
+                lease_until_utc datetime(6) null,
+                error_message longtext null,
+                error_detail longtext null,
+                created_at_utc datetime(6) not null default (utc_timestamp(6)),
+                updated_at_utc datetime(6) not null default (utc_timestamp(6))
+            );
+            """,
+            $"alter table {_runsTable} add column schedule_slot_utc datetime(6) null;",
+            $"create index {QuoteIndex($"ix_{_runsTableName}_due")} on {_runsTable} (status, scheduled_for_utc);",
+            $"create index {QuoteIndex($"ix_{_runsTableName}_lease")} on {_runsTable} (lease_until_utc);",
+            $"create index {QuoteIndex($"ix_{_runsTableName}_job_name")} on {_runsTable} (job_name);",
+            $"create index {QuoteIndex($"ix_{_runsTableName}_completed")} on {_runsTable} (status, completed_at_utc);",
+            $"create unique index {QuoteIndex($"ix_{_runsTableName}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc);",
+            $"""
+            create table if not exists {_locksTable} (
+                lock_key varchar(256) primary key,
+                owner varchar(256) not null,
+                lease_until_utc datetime(6) not null,
+                updated_at_utc datetime(6) not null default (utc_timestamp(6))
+            );
+            """,
+        };
     }
 
     private static string Quote(string identifier)
