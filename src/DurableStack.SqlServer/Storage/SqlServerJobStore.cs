@@ -24,7 +24,9 @@ public sealed class SqlServerJobStore : IDurableJobStore
     private readonly string _locksTable;
     private readonly string _migrationsTable;
 
-    private const int CurrentSchemaVersion = 1;
+    // v1: initial schema. v2: drop the never-used job_locks table (sp_getapplock is
+    // used instead).
+    private const int CurrentSchemaVersion = 2;
 
     public SqlServerJobStore(DurableStackOptions options)
     {
@@ -1043,24 +1045,41 @@ public sealed class SqlServerJobStore : IDurableJobStore
             await lockCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (await GetSchemaVersionAsync(connection, transaction, cancellationToken) < CurrentSchemaVersion)
-        {
-            await using (var migrate = new SqlCommand(BuildInitMigrationSql(), connection, transaction))
-            {
-                await migrate.ExecuteNonQueryAsync(cancellationToken);
-            }
+        var version = await GetSchemaVersionAsync(connection, transaction, cancellationToken);
 
-            await using (var record = new SqlCommand(
-                $"if not exists (select 1 from {_migrationsTable} where version = @version) insert into {_migrationsTable} (version, applied_at_utc) values (@version, SYSUTCDATETIME());",
-                connection,
-                transaction))
-            {
-                record.Parameters.AddWithValue("@version", CurrentSchemaVersion);
-                await record.ExecuteNonQueryAsync(cancellationToken);
-            }
+        if (version < 1)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildInitMigrationSql(), 1, cancellationToken);
+        }
+
+        if (version < 2)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task ExecuteMigrationStepAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        string sql,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using (var migrate = new SqlCommand(sql, connection, transaction))
+        {
+            await migrate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var record = new SqlCommand(
+            $"if not exists (select 1 from {_migrationsTable} where version = @version) insert into {_migrationsTable} (version, applied_at_utc) values (@version, SYSUTCDATETIME());",
+            connection,
+            transaction))
+        {
+            record.Parameters.AddWithValue("@version", version);
+            await record.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private async Task EnsureSchemaVersionTableAsync(SqlConnection connection, CancellationToken cancellationToken)
@@ -1229,7 +1248,6 @@ public sealed class SqlServerJobStore : IDurableJobStore
     {
         var jobsObject = TableObjectName(_jobsTableName);
         var runsObject = TableObjectName(_runsTableName);
-        var locksObject = TableObjectName(_locksTableName);
 
         var runsDueIndexName = $"ix_{_runsTableName}_due";
         var runsLeaseIndexName = $"ix_{_runsTableName}_lease";
@@ -1351,16 +1369,6 @@ public sealed class SqlServerJobStore : IDurableJobStore
             if not exists (select 1 from sys.indexes where name = N'{runsRecurringUniqueIndexName}' and object_id = object_id(N'{runsObject}'))
             begin
                 create unique index [{runsRecurringUniqueIndexName}] on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;
-            end;
-
-            if object_id(N'{locksObject}', N'U') is null
-            begin
-                create table {_locksTable} (
-                    lock_key nvarchar(256) not null primary key,
-                    owner nvarchar(256) not null,
-                    lease_until_utc datetime2(7) not null,
-                    updated_at_utc datetime2(7) not null constraint DF_{_locksTableName}_updated_at_utc default SYSUTCDATETIME()
-                );
             end;
             """;
     }

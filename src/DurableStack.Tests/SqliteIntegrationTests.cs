@@ -64,7 +64,8 @@ public sealed class SqliteIntegrationTests
 
         Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_jobs"));
         Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_job_runs"));
-        Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_job_locks"));
+        Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_schema_migrations"));
+        Assert.False(await fixture.TableExistsAsync($"{prefix}durable_stack_job_locks"));
     }
 
     [Fact]
@@ -98,7 +99,7 @@ public sealed class SqliteIntegrationTests
             var stores = Enumerable.Range(0, 5).Select(_ => new SqliteJobStore(options)).ToArray();
             await Task.WhenAll(stores.Select(s => s.EnsureMigrationsAppliedAsync(CancellationToken.None)));
 
-            // The schema is usable and the migration was recorded exactly once.
+            // The schema is usable and each migration step was recorded exactly once.
             await stores[0].EnqueueAsync("job-mig-c", "job-type-mig-c", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
             Assert.Single(await stores[0].ClaimDueRunsAsync("worker-mig-c", 1, TimeSpan.FromSeconds(30), CancellationToken.None));
 
@@ -107,7 +108,7 @@ public sealed class SqliteIntegrationTests
                 await connection.OpenAsync();
                 await using var command = new SqliteCommand("select count(*) from durable_stack_schema_migrations", connection);
                 var versions = Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
-                Assert.Equal(1, versions);
+                Assert.Equal(2, versions);
             }
         }
         finally
@@ -122,6 +123,35 @@ public sealed class SqliteIntegrationTests
                 // Best-effort temp cleanup.
             }
         }
+    }
+
+    [Fact]
+    public async Task EnsureMigrationsAppliedAsync_upgrades_legacy_schema_and_drops_locks_table()
+    {
+        await using var fixture = await SqliteFixture.CreateAsync("migu_");
+        var store = fixture.Store;
+
+        // Simulate a v1.0.1 deployment: schema present, legacy locks table present,
+        // and no recorded schema version.
+        var runId = await store.EnqueueAsync("job-upgrade", "job-type-upgrade", null, DateTimeOffset.UtcNow.AddMinutes(5), 3, CancellationToken.None);
+        await using (var connection = new SqliteConnection($"Data Source={fixture.DbPath}"))
+        {
+            await connection.OpenAsync();
+            await using (var legacy = new SqliteCommand("create table migu_durable_stack_job_locks (lock_key text primary key)", connection))
+            {
+                await legacy.ExecuteNonQueryAsync();
+            }
+
+            await using (var wipe = new SqliteCommand("delete from migu_durable_stack_schema_migrations", connection))
+            {
+                await wipe.ExecuteNonQueryAsync();
+            }
+        }
+
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+
+        Assert.False(await fixture.TableExistsAsync("migu_durable_stack_job_locks"));
+        Assert.NotNull(await store.GetRunAsync(runId, CancellationToken.None));
     }
 
     [Fact]

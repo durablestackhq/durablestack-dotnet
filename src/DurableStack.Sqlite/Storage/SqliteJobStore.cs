@@ -17,7 +17,9 @@ public sealed class SqliteJobStore : IDurableJobStore
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
-    private const int CurrentSchemaVersion = 1;
+    // v1: initial schema. v2: drop the never-used job_locks table (SQLite's
+    // single-writer transaction is used instead).
+    private const int CurrentSchemaVersion = 2;
 
     private readonly string _connectionString;
     private readonly string _jobsTable;
@@ -1118,7 +1120,9 @@ public sealed class SqliteJobStore : IDurableJobStore
         // migrators, and its transactional DDL makes the migration atomic.
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
-        if (await GetSchemaVersionAsync(connection, cancellationToken, transaction) < CurrentSchemaVersion)
+        var version = await GetSchemaVersionAsync(connection, cancellationToken, transaction);
+
+        if (version < 1)
         {
             await using (var migrate = new SqliteCommand(BuildInitMigrationSql(), connection, transaction))
             {
@@ -1126,19 +1130,35 @@ public sealed class SqliteJobStore : IDurableJobStore
             }
 
             await EnsureAllowConcurrentRunsColumnAsync(connection, transaction, cancellationToken);
+            await RecordSchemaVersionAsync(connection, transaction, 1, cancellationToken);
+        }
 
-            await using (var record = new SqliteCommand(
-                $"insert or ignore into {_migrationsTable} (version, applied_at_utc) values (@version, @applied_at_utc);",
-                connection,
-                transaction))
+        if (version < 2)
+        {
+            await using (var drop = new SqliteCommand($"drop table if exists {_locksTable};", connection, transaction))
             {
-                record.Parameters.AddWithValue("@version", CurrentSchemaVersion);
-                record.Parameters.AddWithValue("@applied_at_utc", ToDbTimestamp(DateTimeOffset.UtcNow));
-                await record.ExecuteNonQueryAsync(cancellationToken);
+                await drop.ExecuteNonQueryAsync(cancellationToken);
             }
+
+            await RecordSchemaVersionAsync(connection, transaction, 2, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task RecordSchemaVersionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using var record = new SqliteCommand(
+            $"insert or ignore into {_migrationsTable} (version, applied_at_utc) values (@version, @applied_at_utc);",
+            connection,
+            transaction);
+        record.Parameters.AddWithValue("@version", version);
+        record.Parameters.AddWithValue("@applied_at_utc", ToDbTimestamp(DateTimeOffset.UtcNow));
+        await record.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private async Task<int> GetSchemaVersionAsync(
@@ -1321,13 +1341,6 @@ public sealed class SqliteJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_job_name")} on {_runsTable} (job_name);");
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_completed")} on {_runsTable} (status, completed_at_utc);");
         sb.AppendLine($"create unique index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
-
-        sb.AppendLine($"create table if not exists {_locksTable} (");
-        sb.AppendLine("    lock_key text primary key,");
-        sb.AppendLine("    owner text not null,");
-        sb.AppendLine("    lease_until_utc text not null,");
-        sb.AppendLine("    updated_at_utc text not null");
-        sb.AppendLine(");");
 
         return sb.ToString();
     }

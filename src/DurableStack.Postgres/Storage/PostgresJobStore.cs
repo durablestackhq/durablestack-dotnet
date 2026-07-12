@@ -15,7 +15,9 @@ public sealed class PostgresJobStore : IDurableJobStore
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
-    private const int CurrentSchemaVersion = 1;
+    // v1: initial schema. v2: drop the never-used job_locks table (native advisory
+    // locks are used instead).
+    private const int CurrentSchemaVersion = 2;
 
     private readonly string _connectionString;
     private readonly string _jobsTable;
@@ -1146,24 +1148,41 @@ public sealed class PostgresJobStore : IDurableJobStore
             await lockCommand.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (await GetSchemaVersionAsync(connection, transaction, cancellationToken) < CurrentSchemaVersion)
-        {
-            await using (var migrate = new NpgsqlCommand(BuildInitMigrationSql(), connection, transaction))
-            {
-                await migrate.ExecuteNonQueryAsync(cancellationToken);
-            }
+        var version = await GetSchemaVersionAsync(connection, transaction, cancellationToken);
 
-            await using (var record = new NpgsqlCommand(
-                $"insert into {_migrationsTable} (version, applied_at_utc) values (@version, now()) on conflict (version) do nothing;",
-                connection,
-                transaction))
-            {
-                record.Parameters.AddWithValue("version", CurrentSchemaVersion);
-                await record.ExecuteNonQueryAsync(cancellationToken);
-            }
+        if (version < 1)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildInitMigrationSql(), 1, cancellationToken);
+        }
+
+        if (version < 2)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task ExecuteMigrationStepAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using (var migrate = new NpgsqlCommand(sql, connection, transaction))
+        {
+            await migrate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var record = new NpgsqlCommand(
+            $"insert into {_migrationsTable} (version, applied_at_utc) values (@version, now()) on conflict (version) do nothing;",
+            connection,
+            transaction))
+        {
+            record.Parameters.AddWithValue("version", version);
+            await record.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private async Task EnsureSchemaVersionTableAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
@@ -1270,13 +1289,6 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"alter table {_jobsTable} drop column if exists retry_backoff_seconds;");
         sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc timestamptz null;");
         sb.AppendLine($"create unique index if not exists ix_{_runsTable}_recurring_slot_unique on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
-
-        sb.AppendLine($"create table if not exists {_locksTable} (");
-        sb.AppendLine("    lock_key text primary key,");
-        sb.AppendLine("    owner text not null,");
-        sb.AppendLine("    lease_until_utc timestamptz not null,");
-        sb.AppendLine("    updated_at_utc timestamptz not null default now()");
-        sb.AppendLine(");");
 
         return sb.ToString();
     }

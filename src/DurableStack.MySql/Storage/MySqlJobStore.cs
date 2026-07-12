@@ -16,7 +16,9 @@ public sealed class MySqlJobStore : IDurableJobStore
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
-    private const int CurrentSchemaVersion = 1;
+    // v1: initial schema. v2: drop the never-used job_locks table (GET_LOCK is used
+    // instead).
+    private const int CurrentSchemaVersion = 2;
 
     private readonly string _connectionString;
     private readonly string _jobsTableName;
@@ -1115,27 +1117,16 @@ public sealed class MySqlJobStore : IDurableJobStore
 
         try
         {
-            if (await GetSchemaVersionAsync(connection, cancellationToken) < CurrentSchemaVersion)
-            {
-                foreach (var statement in BuildInitMigrationStatements())
-                {
-                    await using var command = new MySqlCommand(statement, connection);
-                    try
-                    {
-                        await command.ExecuteNonQueryAsync(cancellationToken);
-                    }
-                    catch (MySqlException ex) when (ex.Number is 1060 or 1061 or 1091)
-                    {
-                        // 1060 duplicate column, 1061 duplicate index, 1091 can't drop
-                        // (absent): the schema is already in the desired state.
-                    }
-                }
+            var version = await GetSchemaVersionAsync(connection, cancellationToken);
 
-                await using var record = new MySqlCommand(
-                    $"insert ignore into {_migrationsTable} (version, applied_at_utc) values (@version, utc_timestamp(6));",
-                    connection);
-                record.Parameters.AddWithValue("@version", CurrentSchemaVersion);
-                await record.ExecuteNonQueryAsync(cancellationToken);
+            if (version < 1)
+            {
+                await ExecuteMigrationStepAsync(connection, BuildInitMigrationStatements(), 1, cancellationToken);
+            }
+
+            if (version < 2)
+            {
+                await ExecuteMigrationStepAsync(connection, new[] { $"drop table if exists {_locksTable};" }, 2, cancellationToken);
             }
         }
         finally
@@ -1144,6 +1135,33 @@ public sealed class MySqlJobStore : IDurableJobStore
             releaseCommand.Parameters.AddWithValue("@name", lockName);
             _ = await releaseCommand.ExecuteScalarAsync(CancellationToken.None);
         }
+    }
+
+    private async Task ExecuteMigrationStepAsync(
+        MySqlConnection connection,
+        IReadOnlyList<string> statements,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        foreach (var statement in statements)
+        {
+            await using var command = new MySqlCommand(statement, connection);
+            try
+            {
+                await command.ExecuteNonQueryAsync(cancellationToken);
+            }
+            catch (MySqlException ex) when (ex.Number is 1060 or 1061 or 1091)
+            {
+                // 1060 duplicate column, 1061 duplicate index, 1091 can't drop
+                // (absent): the schema is already in the desired state.
+            }
+        }
+
+        await using var record = new MySqlCommand(
+            $"insert ignore into {_migrationsTable} (version, applied_at_utc) values (@version, utc_timestamp(6));",
+            connection);
+        record.Parameters.AddWithValue("@version", version);
+        await record.ExecuteNonQueryAsync(cancellationToken);
     }
 
     private static async Task ExecuteOnConnectionAsync(MySqlConnection connection, string sql, CancellationToken cancellationToken)
@@ -1336,14 +1354,6 @@ public sealed class MySqlJobStore : IDurableJobStore
             $"create index {QuoteIndex($"ix_{_runsTableName}_job_name")} on {_runsTable} (job_name);",
             $"create index {QuoteIndex($"ix_{_runsTableName}_completed")} on {_runsTable} (status, completed_at_utc);",
             $"create unique index {QuoteIndex($"ix_{_runsTableName}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc);",
-            $"""
-            create table if not exists {_locksTable} (
-                lock_key varchar(256) primary key,
-                owner varchar(256) not null,
-                lease_until_utc datetime(6) not null,
-                updated_at_utc datetime(6) not null default (utc_timestamp(6))
-            );
-            """,
         };
     }
 

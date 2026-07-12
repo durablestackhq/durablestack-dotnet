@@ -80,7 +80,8 @@ public sealed class MySqlIntegrationTests
 
         Assert.True(await TableExistsAsync(connectionString, $"{prefix}durable_stack_jobs"));
         Assert.True(await TableExistsAsync(connectionString, $"{prefix}durable_stack_job_runs"));
-        Assert.True(await TableExistsAsync(connectionString, $"{prefix}durable_stack_job_locks"));
+        Assert.True(await TableExistsAsync(connectionString, $"{prefix}durable_stack_schema_migrations"));
+        Assert.False(await TableExistsAsync(connectionString, $"{prefix}durable_stack_job_locks"));
     }
 
     [SkippableFact]
@@ -115,7 +116,7 @@ public sealed class MySqlIntegrationTests
         var stores = Enumerable.Range(0, 5).Select(_ => new MySqlJobStore(options)).ToArray();
         await Task.WhenAll(stores.Select(s => s.EnsureMigrationsAppliedAsync(CancellationToken.None)));
 
-        // The schema is usable and the migration was recorded exactly once.
+        // The schema is usable and each migration step was recorded exactly once.
         await stores[0].EnqueueAsync("job-mig-c", "job-type-mig-c", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
         Assert.Single(await stores[0].ClaimDueRunsAsync("worker-mig-c", 1, TimeSpan.FromSeconds(30), CancellationToken.None));
 
@@ -123,7 +124,40 @@ public sealed class MySqlIntegrationTests
         await connection.OpenAsync();
         await using var command = new MySqlCommand($"select count(*) from {prefix}durable_stack_schema_migrations", connection);
         var versions = Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Equal(1, versions);
+        Assert.Equal(2, versions);
+    }
+
+    [SkippableFact]
+    public async Task EnsureMigrationsAppliedAsync_upgrades_legacy_schema_and_drops_locks_table()
+    {
+        var connectionString = GetConnectionStringOrSkip();
+
+        var prefix = $"migu_{Guid.NewGuid().ToString("N")[..8]}_";
+        var options = CreateOptions(connectionString, prefix);
+        var store = new MySqlJobStore(options);
+
+        // Simulate a v1.0.1 deployment: schema present, legacy locks table present,
+        // and no recorded schema version.
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+        var runId = await store.EnqueueAsync("job-upgrade", "job-type-upgrade", null, DateTimeOffset.UtcNow.AddMinutes(5), 3, CancellationToken.None);
+        await using (var connection = new MySqlConnection(connectionString))
+        {
+            await connection.OpenAsync();
+            await using (var legacy = new MySqlCommand($"create table {prefix}durable_stack_job_locks (lock_key varchar(64) primary key)", connection))
+            {
+                await legacy.ExecuteNonQueryAsync();
+            }
+
+            await using (var wipe = new MySqlCommand($"delete from {prefix}durable_stack_schema_migrations", connection))
+            {
+                await wipe.ExecuteNonQueryAsync();
+            }
+        }
+
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+
+        Assert.False(await TableExistsAsync(connectionString, $"{prefix}durable_stack_job_locks"));
+        Assert.NotNull(await store.GetRunAsync(runId, CancellationToken.None));
     }
 
     [SkippableFact]
