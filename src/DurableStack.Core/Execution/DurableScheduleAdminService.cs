@@ -8,28 +8,43 @@ using DurableStack.Core.Scheduling;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Administers recurring job schedules directly against the store: listing, enabling and
+/// disabling, changing cron expressions, and triggering on-demand runs. Cron and time zone
+/// inputs are validated by computing the next occurrence before any store write, so invalid
+/// values are rejected without touching the schedule.
+/// </summary>
 public sealed class DurableScheduleAdminService : IDurableScheduleAdminService
 {
     private readonly IDurableJobStore _store;
     private readonly IDurableJobRegistry _registry;
 
+    /// <summary>
+    /// Creates an admin service that updates schedules in <paramref name="store"/> and
+    /// validates on-demand runs against <paramref name="registry"/>.
+    /// </summary>
+    /// <param name="store">Store holding the recurring schedule state.</param>
+    /// <param name="registry">Registry used to resolve registrations for on-demand runs.</param>
     public DurableScheduleAdminService(IDurableJobStore store, IDurableJobRegistry registry)
     {
         _store = store;
         _registry = registry;
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<RecurringJobState>> ListScheduledJobsAsync(bool includeDisabled = true, CancellationToken cancellationToken = default)
     {
         return _store.GetRecurringJobsAsync(includeDisabled, cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task<bool> SetScheduledJobEnabledAsync(string jobName, bool enabled, CancellationToken cancellationToken = default)
     {
         var nextRunAtUtc = enabled ? await ResolveNextRunUtcAsync(jobName, cancellationToken) : null;
         return await _store.SetRecurringJobEnabledAsync(jobName, enabled, nextRunAtUtc, cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task<bool> UpdateScheduledJobCronAsync(
         string jobName,
         string cronExpression,
@@ -49,6 +64,7 @@ public sealed class DurableScheduleAdminService : IDurableScheduleAdminService
             cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task<Guid?> RunScheduledJobNowAsync(string jobName, CancellationToken cancellationToken = default)
     {
         var registration = _registry.FindByName(jobName);

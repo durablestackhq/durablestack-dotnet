@@ -3,8 +3,24 @@ using Cronos;
 
 namespace DurableStack.Core.Scheduling;
 
+/// <summary>
+/// Computes cron occurrences using Cronos. Accepts standard 5-field expressions and 6-field
+/// expressions with a leading seconds field; the field count selects the format
+/// automatically.
+/// </summary>
 public static class CronScheduleCalculator
 {
+    /// <summary>
+    /// Returns the next occurrence strictly after <paramref name="fromUtc"/>, evaluated in
+    /// the given time zone and returned as UTC.
+    /// </summary>
+    /// <param name="cronExpression">A 5-field or 6-field (with seconds) cron expression.</param>
+    /// <param name="timeZone">Time zone identifier the schedule is evaluated in, resolved by <see cref="TimeZoneResolver"/>.</param>
+    /// <param name="fromUtc">Exclusive UTC starting point of the search.</param>
+    /// <returns>The next occurrence in UTC.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// The expression does not have 5 or 6 fields, or it yields no future occurrence.
+    /// </exception>
     public static DateTimeOffset GetNextOccurrenceUtc(string cronExpression, string timeZone, DateTimeOffset fromUtc)
     {
         var expression = CronExpression.Parse(cronExpression, ResolveCronFormat(cronExpression));

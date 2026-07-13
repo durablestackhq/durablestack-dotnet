@@ -11,10 +11,22 @@ using MySqlConnector;
 
 namespace DurableStack.MySql.Storage;
 
+/// <summary>
+/// MySQL-backed job store; requires MySQL 8.x (MariaDB also works). Due runs are
+/// claimed inside a transaction using SELECT ... FOR UPDATE SKIP LOCKED, so concurrent
+/// workers never block or double-claim, and leases are evaluated against the worker's
+/// clock (UTC). Run identifiers are stored as char(36) and mapped to Guid via
+/// MySqlConnector. Completion writes are lease-fenced, and a run whose lease expired
+/// with no attempts remaining is failed terminally at claim time rather than reclaimed.
+/// </summary>
 public sealed class MySqlJobStore : IDurableJobStore
 {
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
+
+    // v1: initial schema. v2: drop the never-used job_locks table (GET_LOCK is used
+    // instead).
+    private const int CurrentSchemaVersion = 2;
 
     private readonly string _connectionString;
     private readonly string _jobsTableName;
@@ -23,7 +35,12 @@ public sealed class MySqlJobStore : IDurableJobStore
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
+    /// <summary>
+    /// Initializes the store from the configured options. Requires a MySQL connection
+    /// string; table names are resolved from the configured table prefix.
+    /// </summary>
     public MySqlJobStore(DurableStackOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -40,8 +57,10 @@ public sealed class MySqlJobStore : IDurableJobStore
         _jobsTable = Quote(_jobsTableName);
         _runsTable = Quote(_runsTableName);
         _locksTable = Quote(_locksTableName);
+        _migrationsTable = Quote(MySqlTableNameResolver.Migrations(options));
     }
 
+    /// <inheritdoc />
     public async Task<Guid> EnqueueAsync(
         string jobName,
         string jobType,
@@ -92,6 +111,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runId;
     }
 
+    /// <inheritdoc />
     public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
         string jobName,
         string jobType,
@@ -150,6 +170,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return affected > 0 ? runId : null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -299,6 +320,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return claimed;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         // Fenced write: only the current lease owner may record the outcome, so a
@@ -326,6 +348,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -350,6 +373,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkFailedAsync(
         Guid runId,
         string workerName,
@@ -418,6 +442,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -454,6 +479,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -490,6 +516,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
         int take,
@@ -534,6 +561,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -575,6 +603,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
         string status,
         int take,
@@ -619,6 +648,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -661,6 +691,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
@@ -712,6 +743,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task<bool> SetRecurringJobEnabledAsync(
         string jobName,
         bool enabled,
@@ -738,6 +770,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> UpdateRecurringJobScheduleAsync(
         string jobName,
         string cronExpression,
@@ -767,6 +800,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<int> PruneHistoricalRunsAsync(
         DateTimeOffset completedBeforeUtc,
         int batchSize,
@@ -790,6 +824,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -861,6 +896,7 @@ public sealed class MySqlJobStore : IDurableJobStore
             new MySqlParameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetDueRecurringJobsAsync(
         DateTimeOffset nowUtc,
         int batchSize,
@@ -916,6 +952,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task UpdateRecurringNextRunAsync(
         string jobName,
         DateTimeOffset nextRunAtUtc,
@@ -936,6 +973,7 @@ public sealed class MySqlJobStore : IDurableJobStore
             new MySqlParameter("@name", jobName));
     }
 
+    /// <inheritdoc />
     public async Task<bool> TryMaterializeRecurringRunAsync(
         RecurringJobState recurring,
         DurableJobRegistration registration,
@@ -1051,6 +1089,7 @@ public sealed class MySqlJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
@@ -1078,15 +1117,73 @@ public sealed class MySqlJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <summary>
+    /// Creates or upgrades the schema to the current version, recording each applied
+    /// version in the schema migrations table. Concurrent workers are serialized with
+    /// GET_LOCK; because MySQL DDL is not transactional, each migration statement is
+    /// individually idempotent so an interrupted migration can safely re-run. Returns
+    /// without locking when the schema is already current.
+    /// </summary>
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        // Statements run one at a time, tolerating "already exists"/"doesn't exist"
-        // errors, because MySQL (unlike MariaDB) has no IF [NOT] EXISTS support for
-        // CREATE INDEX / ADD COLUMN / DROP COLUMN.
         await using var connection = new MySqlConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
 
-        foreach (var statement in BuildInitMigrationStatements())
+        await ExecuteOnConnectionAsync(
+            connection,
+            $"create table if not exists {_migrationsTable} (version int primary key, applied_at_utc datetime(6) not null default (utc_timestamp(6)));",
+            cancellationToken);
+
+        if (await GetSchemaVersionAsync(connection, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // GET_LOCK serializes concurrent workers booting at once. MySQL DDL commits
+        // implicitly (no transactional DDL), so the statements themselves must stay
+        // individually idempotent: each runs one at a time, tolerating
+        // "already exists"/"doesn't exist" errors, because MySQL (unlike MariaDB) has
+        // no IF [NOT] EXISTS support for CREATE INDEX / ADD COLUMN / DROP COLUMN.
+        var lockName = $"durablestack_migration_{_runsTableName}";
+        await using (var lockCommand = new MySqlCommand("select get_lock(@name, 60);", connection))
+        {
+            lockCommand.Parameters.AddWithValue("@name", lockName);
+            var acquired = await lockCommand.ExecuteScalarAsync(cancellationToken);
+            if (Convert.ToInt32(acquired, System.Globalization.CultureInfo.InvariantCulture) != 1)
+            {
+                throw new TimeoutException("Timed out acquiring the DurableStack migration lock.");
+            }
+        }
+
+        try
+        {
+            var version = await GetSchemaVersionAsync(connection, cancellationToken);
+
+            if (version < 1)
+            {
+                await ExecuteMigrationStepAsync(connection, BuildInitMigrationStatements(), 1, cancellationToken);
+            }
+
+            if (version < 2)
+            {
+                await ExecuteMigrationStepAsync(connection, new[] { $"drop table if exists {_locksTable};" }, 2, cancellationToken);
+            }
+        }
+        finally
+        {
+            await using var releaseCommand = new MySqlCommand("select release_lock(@name);", connection);
+            releaseCommand.Parameters.AddWithValue("@name", lockName);
+            _ = await releaseCommand.ExecuteScalarAsync(CancellationToken.None);
+        }
+    }
+
+    private async Task ExecuteMigrationStepAsync(
+        MySqlConnection connection,
+        IReadOnlyList<string> statements,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        foreach (var statement in statements)
         {
             await using var command = new MySqlCommand(statement, connection);
             try
@@ -1095,10 +1192,29 @@ public sealed class MySqlJobStore : IDurableJobStore
             }
             catch (MySqlException ex) when (ex.Number is 1060 or 1061 or 1091)
             {
-                // 1060 duplicate column, 1061 duplicate index, 1091 can't drop (absent):
-                // the schema is already in the desired state for this statement.
+                // 1060 duplicate column, 1061 duplicate index, 1091 can't drop
+                // (absent): the schema is already in the desired state.
             }
         }
+
+        await using var record = new MySqlCommand(
+            $"insert ignore into {_migrationsTable} (version, applied_at_utc) values (@version, utc_timestamp(6));",
+            connection);
+        record.Parameters.AddWithValue("@version", version);
+        await record.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private static async Task ExecuteOnConnectionAsync(MySqlConnection connection, string sql, CancellationToken cancellationToken)
+    {
+        await using var command = new MySqlCommand(sql, connection);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<int> GetSchemaVersionAsync(MySqlConnection connection, CancellationToken cancellationToken)
+    {
+        await using var command = new MySqlCommand($"select coalesce(max(version), 0) from {_migrationsTable};", connection);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params MySqlParameter[] parameters)
@@ -1278,14 +1394,6 @@ public sealed class MySqlJobStore : IDurableJobStore
             $"create index {QuoteIndex($"ix_{_runsTableName}_job_name")} on {_runsTable} (job_name);",
             $"create index {QuoteIndex($"ix_{_runsTableName}_completed")} on {_runsTable} (status, completed_at_utc);",
             $"create unique index {QuoteIndex($"ix_{_runsTableName}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc);",
-            $"""
-            create table if not exists {_locksTable} (
-                lock_key varchar(256) primary key,
-                owner varchar(256) not null,
-                lease_until_utc datetime(6) not null,
-                updated_at_utc datetime(6) not null default (utc_timestamp(6))
-            );
-            """,
         };
     }
 

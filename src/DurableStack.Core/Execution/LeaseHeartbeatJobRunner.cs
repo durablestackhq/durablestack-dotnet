@@ -9,6 +9,14 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Decorates an <see cref="IDurableJobRunner"/> with a lease heartbeat: while the inner
+/// runner executes, a background loop extends the run's lease at half the lease duration
+/// (at least every 250 ms). If an extension is refused — the lease was reclaimed by another
+/// worker or the run was cancelled — the local execution is cancelled so it cannot race the
+/// new owner to completion. Transient heartbeat errors are logged and retried at the next
+/// interval.
+/// </summary>
 public sealed class LeaseHeartbeatJobRunner : IDurableJobRunner
 {
     private readonly IDurableJobRunner _inner;
@@ -16,6 +24,13 @@ public sealed class LeaseHeartbeatJobRunner : IDurableJobRunner
     private readonly DurableStackOptions _options;
     private readonly ILogger<LeaseHeartbeatJobRunner>? _logger;
 
+    /// <summary>
+    /// Creates a heartbeat wrapper around <paramref name="inner"/>.
+    /// </summary>
+    /// <param name="inner">Runner that performs the actual job execution.</param>
+    /// <param name="store">Store used to extend the run's lease.</param>
+    /// <param name="options">Configuration supplying the lease duration and worker name.</param>
+    /// <param name="logger">Optional logger for heartbeat failures and lease-loss warnings.</param>
     public LeaseHeartbeatJobRunner(
         IDurableJobRunner inner,
         IDurableJobStore store,
@@ -28,6 +43,7 @@ public sealed class LeaseHeartbeatJobRunner : IDurableJobRunner
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task RunAsync(JobRunRecord run, CancellationToken cancellationToken)
     {
         var heartbeatInterval = TimeSpan.FromMilliseconds(Math.Max(250, _options.LeaseDuration.TotalMilliseconds / 2));

@@ -6,8 +6,20 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace DurableStack.Hosting.Hosting;
 
+/// <summary>
+/// Extension methods for initializing DurableStack storage ahead of host start.
+/// </summary>
 public static class ServiceProviderBootstrapExtensions
 {
+    /// <summary>
+    /// Applies job-store migrations and syncs recurring job registrations before the host (and its
+    /// hosted services) start — useful when other startup code needs the DurableStack schema to exist,
+    /// or when enqueuing jobs before the worker runs. Initialization is tracked via
+    /// <c>DurableStackBootstrapState</c> so repeated calls execute the work at most once; the steps
+    /// themselves are idempotent and safe to run again when the worker hosted service starts.
+    /// </summary>
+    /// <param name="serviceProvider">Service provider containing the DurableStack registrations.</param>
+    /// <param name="cancellationToken">Cancels the migration and sync work.</param>
     public static async Task InitializeDurableStackAsync(this IServiceProvider serviceProvider, CancellationToken cancellationToken = default)
     {
         if (serviceProvider is null)

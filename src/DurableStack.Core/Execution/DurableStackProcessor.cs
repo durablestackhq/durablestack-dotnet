@@ -13,6 +13,15 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// The polling engine of the job system. Each cycle prunes runs past the retention window
+/// (when a sweep is due), materializes pending runs for due recurring schedules, claims due
+/// runs from the store under a lease — capped by <c>MaxConcurrentRuns</c> — and executes
+/// them fire-and-forget while tracking the in-flight tasks. Completion writes are fenced to
+/// the lease owner: if the lease was reclaimed while this worker executed, the outcome is
+/// discarded and no completion event is published. Event sink failures are logged and never
+/// affect run state.
+/// </summary>
 public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRunDrainer
 {
     private readonly IDurableJobStore _store;
@@ -28,6 +37,17 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
     private readonly HashSet<Task> _inFlightRuns = new();
     private DateTimeOffset _nextRetentionSweepAtUtc = DateTimeOffset.MinValue;
 
+    /// <summary>
+    /// Creates a processor wired to the given store, registry, runner, and scheduler.
+    /// </summary>
+    /// <param name="store">Store that runs are claimed from and completion outcomes are written to.</param>
+    /// <param name="registry">Registry consulted for per-job retry behavior.</param>
+    /// <param name="runner">Runner that executes each claimed run (typically wrapped by <see cref="LeaseHeartbeatJobRunner"/>).</param>
+    /// <param name="recurringScheduler">Scheduler that materializes due recurring runs at the start of each cycle.</param>
+    /// <param name="options">Configuration for polling, leasing, concurrency, retries, and retention.</param>
+    /// <param name="eventSinks">Sinks that receive lifecycle events; failures are isolated per sink.</param>
+    /// <param name="eventFactory">Factory that stamps common fields onto emitted events.</param>
+    /// <param name="logger">Optional logger for execution and fencing diagnostics.</param>
     public DurableStackProcessor(
         IDurableJobStore store,
         IDurableJobRegistry registry,
@@ -48,6 +68,7 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<int> ProcessOnceAsync(CancellationToken cancellationToken)
     {
         DurableStackTelemetry.WorkerPolls.Add(1);
@@ -121,6 +142,7 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
             TaskScheduler.Default);
     }
 
+    /// <inheritdoc />
     public async Task DrainInFlightRunsAsync(CancellationToken cancellationToken)
     {
         while (true)
@@ -271,8 +293,8 @@ public sealed class DurableStackProcessor : IDurableStackProcessor, IInFlightRun
                 _eventFactory.Create(
                     DurableStackEventTypes.JobFailed,
                     run,
-                    ex.Message,
                     errorType: ex.GetType().FullName,
+                    errorMessage: ex.Message,
                     errorDetail: ex.ToString(),
                     retryAtUtc: retryAt,
                     durationMs: (failedAt - (run.StartedAtUtc ?? failedAt)).TotalMilliseconds),

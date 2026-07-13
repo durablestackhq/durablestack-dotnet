@@ -10,6 +10,12 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Executes a claimed run by resolving the registered job type from dependency injection,
+/// deserializing the JSON payload for typed jobs, and invoking <c>ExecuteAsync</c>. When
+/// <c>JobActivation</c> is <see cref="DurableStackJobActivationMode.ScopedPerExecution"/>
+/// (the default), each execution gets its own service scope, disposed when the run finishes.
+/// </summary>
 public sealed class DefaultDurableJobRunner : IDurableJobRunner
 {
     private readonly IServiceProvider _serviceProvider;
@@ -17,6 +23,14 @@ public sealed class DefaultDurableJobRunner : IDurableJobRunner
     private readonly IDurableJobRegistry _registry;
     private readonly DurableStackOptions _options;
 
+    /// <summary>
+    /// Creates a runner that activates jobs from the given container according to the
+    /// configured activation mode.
+    /// </summary>
+    /// <param name="serviceProvider">Root provider used to resolve jobs in root activation mode.</param>
+    /// <param name="scopeFactory">Factory used to create a per-execution scope in scoped activation mode.</param>
+    /// <param name="registry">Registry used to look up the job registration for each run.</param>
+    /// <param name="options">Configuration supplying the job activation mode.</param>
     public DefaultDurableJobRunner(
         IServiceProvider serviceProvider,
         IServiceScopeFactory scopeFactory,
@@ -29,6 +43,7 @@ public sealed class DefaultDurableJobRunner : IDurableJobRunner
         _options = options;
     }
 
+    /// <inheritdoc />
     public async Task RunAsync(JobRunRecord run, CancellationToken cancellationToken)
     {
         var registration = _registry.FindByName(run.JobName)

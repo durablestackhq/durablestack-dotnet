@@ -10,16 +10,34 @@ using Npgsql;
 
 namespace DurableStack.Postgres.Storage;
 
+/// <summary>
+/// PostgreSQL-backed job store. Due runs are claimed atomically in a single CTE update
+/// using FOR UPDATE SKIP LOCKED, so concurrent workers never block or double-claim, and
+/// leases are evaluated against the database clock (now()). Payloads are stored as
+/// jsonb, which rejects invalid JSON and normalizes the stored text. Completion writes
+/// are lease-fenced, and a run whose lease expired with no attempts remaining is failed
+/// terminally at claim time rather than reclaimed.
+/// </summary>
 public sealed class PostgresJobStore : IDurableJobStore
 {
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
+    // v1: initial schema. v2: drop the never-used job_locks table (native advisory
+    // locks are used instead).
+    private const int CurrentSchemaVersion = 2;
+
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
+    /// <summary>
+    /// Initializes the store from the configured options. Requires a PostgreSQL connection
+    /// string; table names are resolved from the configured table prefix, which is
+    /// lowercased.
+    /// </summary>
     public PostgresJobStore(DurableStackOptions options)
     {
         var connectionString = options.Postgres.ConnectionString;
@@ -33,8 +51,10 @@ public sealed class PostgresJobStore : IDurableJobStore
         _jobsTable = PostgresTableNameResolver.Jobs(options);
         _runsTable = PostgresTableNameResolver.Runs(options);
         _locksTable = PostgresTableNameResolver.Locks(options);
+        _migrationsTable = PostgresTableNameResolver.Migrations(options);
     }
 
+    /// <inheritdoc />
     public async Task<Guid> EnqueueAsync(
         string jobName,
         string jobType,
@@ -87,6 +107,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runId;
     }
 
+    /// <inheritdoc />
     public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
         string jobName,
         string jobType,
@@ -145,6 +166,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return result is null or DBNull ? null : runId;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -243,6 +265,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         // Fenced write: only the current lease owner may record the outcome, so a
@@ -270,6 +293,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -294,6 +318,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkFailedAsync(
         Guid runId,
         string workerName,
@@ -364,6 +389,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -401,6 +427,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -438,6 +465,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
         int take,
@@ -482,6 +510,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -523,6 +552,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
         string status,
         int take,
@@ -567,6 +597,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -609,6 +640,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
@@ -660,6 +692,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task<bool> SetRecurringJobEnabledAsync(
         string jobName,
         bool enabled,
@@ -686,6 +719,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> UpdateRecurringJobScheduleAsync(
         string jobName,
         string cronExpression,
@@ -715,6 +749,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<int> PruneHistoricalRunsAsync(
         DateTimeOffset completedBeforeUtc,
         int batchSize,
@@ -745,6 +780,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -818,6 +854,7 @@ public sealed class PostgresJobStore : IDurableJobStore
             new NpgsqlParameter("next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetDueRecurringJobsAsync(
         DateTimeOffset nowUtc,
         int batchSize,
@@ -873,6 +910,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task UpdateRecurringNextRunAsync(
         string jobName,
         DateTimeOffset nextRunAtUtc,
@@ -893,6 +931,7 @@ public sealed class PostgresJobStore : IDurableJobStore
             new NpgsqlParameter("name", jobName));
     }
 
+    /// <inheritdoc />
     public async Task<bool> TryMaterializeRecurringRunAsync(
         RecurringJobState recurring,
         DurableJobRegistration registration,
@@ -983,6 +1022,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
@@ -1120,10 +1160,118 @@ public sealed class PostgresJobStore : IDurableJobStore
         return -1;
     }
 
+    /// <summary>
+    /// Creates or upgrades the schema to the current version, recording each applied
+    /// version in the schema migrations table. Concurrent workers are serialized with a
+    /// transaction-scoped advisory lock (pg_advisory_xact_lock), and PostgreSQL's
+    /// transactional DDL applies each migration atomically. Returns without locking when
+    /// the schema is already current.
+    /// </summary>
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await EnsureSchemaVersionTableAsync(connection, cancellationToken);
+        if (await GetSchemaVersionAsync(connection, null, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // A transaction-scoped advisory lock serializes concurrent workers booting at
+        // once, and PostgreSQL's transactional DDL makes the migration atomic — a
+        // mid-migration crash leaves no partial schema.
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+
+        await using (var lockCommand = new NpgsqlCommand("select pg_advisory_xact_lock(@key);", connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue("key", ComputeMigrationLockKey(_migrationsTable));
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var version = await GetSchemaVersionAsync(connection, transaction, cancellationToken);
+
+        if (version < 1)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildInitMigrationSql(), 1, cancellationToken);
+        }
+
+        if (version < 2)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task ExecuteMigrationStepAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        string sql,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using (var migrate = new NpgsqlCommand(sql, connection, transaction))
+        {
+            await migrate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var record = new NpgsqlCommand(
+            $"insert into {_migrationsTable} (version, applied_at_utc) values (@version, now()) on conflict (version) do nothing;",
+            connection,
+            transaction))
+        {
+            record.Parameters.AddWithValue("version", version);
+            await record.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private async Task EnsureSchemaVersionTableAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            create table if not exists {_migrationsTable} (
+                version int primary key,
+                applied_at_utc timestamptz not null default now()
+            );
+            """;
+
+        try
+        {
+            await using var command = new NpgsqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (PostgresException ex) when (ex.SqlState is "23505" or "42P07")
+        {
+            // Concurrent CREATE TABLE IF NOT EXISTS can still race on the catalog
+            // (duplicate pg_type key / duplicate table); the table exists either way.
+        }
+    }
+
+    private async Task<int> GetSchemaVersionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction? transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new NpgsqlCommand(
+            $"select coalesce(max(version), 0) from {_migrationsTable};",
+            connection,
+            transaction);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static long ComputeMigrationLockKey(string name)
+    {
+        // Stable FNV-1a 64-bit hash so every worker (and only workers sharing this
+        // table prefix) contends on the same advisory lock across processes.
+        var hash = 14695981039346656037UL;
+        foreach (var c in $"durablestack:{name}")
+        {
+            hash ^= c;
+            hash *= 1099511628211UL;
+        }
+
+        return unchecked((long)hash);
     }
 
     private string BuildInitMigrationSql()
@@ -1182,13 +1330,6 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"alter table {_jobsTable} drop column if exists retry_backoff_seconds;");
         sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc timestamptz null;");
         sb.AppendLine($"create unique index if not exists ix_{_runsTable}_recurring_slot_unique on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
-
-        sb.AppendLine($"create table if not exists {_locksTable} (");
-        sb.AppendLine("    lock_key text primary key,");
-        sb.AppendLine("    owner text not null,");
-        sb.AppendLine("    lease_until_utc timestamptz not null,");
-        sb.AppendLine("    updated_at_utc timestamptz not null default now()");
-        sb.AppendLine(");");
 
         return sb.ToString();
     }

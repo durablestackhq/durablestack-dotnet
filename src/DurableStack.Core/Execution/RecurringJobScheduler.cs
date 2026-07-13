@@ -4,22 +4,45 @@ using System.Threading.Tasks;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Options;
 using DurableStack.Core.Scheduling;
+using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Turns due cron schedules into pending job runs. Each poll fetches due recurring jobs from
+/// the store, computes the following occurrence (skipping missed slots when the catch-up
+/// policy is <see cref="RecurringCatchUpPolicy.SkipMissed"/>), and asks the store to
+/// materialize the run atomically. Errors are isolated per schedule: one bad cron expression
+/// or time zone is logged and skipped without stopping the other schedules.
+/// </summary>
 public sealed class RecurringJobScheduler : IRecurringJobScheduler
 {
     private readonly IDurableJobStore _store;
     private readonly IDurableJobRegistry _registry;
     private readonly DurableStackOptions _options;
+    private readonly ILogger<RecurringJobScheduler>? _logger;
 
-    public RecurringJobScheduler(IDurableJobStore store, IDurableJobRegistry registry, DurableStackOptions options)
+    /// <summary>
+    /// Creates a scheduler that materializes runs from <paramref name="store"/> schedules
+    /// registered in <paramref name="registry"/>.
+    /// </summary>
+    /// <param name="store">Store holding recurring schedules and receiving materialized runs.</param>
+    /// <param name="registry">Registry used to resolve the registration for each due schedule.</param>
+    /// <param name="options">Configuration supplying the recurring catch-up policy.</param>
+    /// <param name="logger">Optional logger for per-schedule materialization failures.</param>
+    public RecurringJobScheduler(
+        IDurableJobStore store,
+        IDurableJobRegistry registry,
+        DurableStackOptions options,
+        ILogger<RecurringJobScheduler>? logger = null)
     {
         _store = store;
         _registry = registry;
         _options = options;
+        _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<int> MaterializeDueRunsAsync(CancellationToken cancellationToken)
     {
         var nowUtc = DateTimeOffset.UtcNow;
@@ -29,40 +52,67 @@ public sealed class RecurringJobScheduler : IRecurringJobScheduler
 
         foreach (var recurring in due)
         {
-            var registration = _registry.FindByName(recurring.JobName);
-            if (registration is null)
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Each schedule is isolated: one row with an unresolvable time zone or a
+            // cron expression with no next occurrence must not abort materialization
+            // for every other schedule (and, since materialization runs before
+            // claiming, all job processing on this worker).
+            try
             {
-                continue;
+                created += await MaterializeScheduleAsync(recurring, nowUtc, cancellationToken);
             }
-
-            var next = CronScheduleCalculator.GetNextOccurrenceUtc(
-                recurring.CronExpression,
-                recurring.TimeZone,
-                recurring.NextRunAtUtc);
-
-            if (_options.Recurring.CatchUpPolicy == RecurringCatchUpPolicy.SkipMissed)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                while (next <= nowUtc)
-                {
-                    next = CronScheduleCalculator.GetNextOccurrenceUtc(
-                        recurring.CronExpression,
-                        recurring.TimeZone,
-                        next);
-                }
+                throw;
             }
-
-            var materialized = await _store.TryMaterializeRecurringRunAsync(
-                recurring,
-                registration,
-                next,
-                cancellationToken);
-
-            if (materialized)
+            catch (Exception ex)
             {
-                created += 1;
+                _logger?.LogError(
+                    ex,
+                    "DurableStack failed to materialize recurring job; other schedules continue. JobName={JobName} Cron={CronExpression} TimeZone={TimeZone}",
+                    recurring.JobName,
+                    recurring.CronExpression,
+                    recurring.TimeZone);
             }
         }
 
         return created;
+    }
+
+    private async Task<int> MaterializeScheduleAsync(
+        Models.RecurringJobState recurring,
+        DateTimeOffset nowUtc,
+        CancellationToken cancellationToken)
+    {
+        var registration = _registry.FindByName(recurring.JobName);
+        if (registration is null)
+        {
+            return 0;
+        }
+
+        var next = CronScheduleCalculator.GetNextOccurrenceUtc(
+            recurring.CronExpression,
+            recurring.TimeZone,
+            recurring.NextRunAtUtc);
+
+        if (_options.Recurring.CatchUpPolicy == RecurringCatchUpPolicy.SkipMissed)
+        {
+            while (next <= nowUtc)
+            {
+                next = CronScheduleCalculator.GetNextOccurrenceUtc(
+                    recurring.CronExpression,
+                    recurring.TimeZone,
+                    next);
+            }
+        }
+
+        var materialized = await _store.TryMaterializeRecurringRunAsync(
+            recurring,
+            registration,
+            next,
+            cancellationToken);
+
+        return materialized ? 1 : 0;
     }
 }

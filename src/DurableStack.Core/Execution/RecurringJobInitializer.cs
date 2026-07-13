@@ -10,12 +10,27 @@ using DurableStack.Core.Scheduling;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Synchronizes code-registered recurring jobs into the store at startup. Each recurring
+/// registration is upserted with its computed next occurrence — unless
+/// <c>ExistingJobBehavior</c> is <see cref="ExistingRecurringJobBehavior.KeepDatabase"/>, in
+/// which case schedules already present in the store are left untouched. When
+/// <c>OrphanedJobBehavior</c> is <see cref="OrphanedRecurringJobBehavior.Disable"/>, stored
+/// schedules with no matching registration are disabled.
+/// </summary>
 public sealed class RecurringJobInitializer : IRecurringJobInitializer
 {
     private readonly IDurableJobRegistry _registry;
     private readonly IDurableJobStore _store;
     private readonly DurableStackOptions _options;
 
+    /// <summary>
+    /// Creates an initializer that syncs registrations from <paramref name="registry"/>
+    /// into <paramref name="store"/> per the recurring registration-sync options.
+    /// </summary>
+    /// <param name="registry">Source of the code-registered recurring jobs.</param>
+    /// <param name="store">Store whose recurring schedules are created or updated.</param>
+    /// <param name="options">Configuration supplying the registration-sync behaviors.</param>
     public RecurringJobInitializer(
         IDurableJobRegistry registry,
         IDurableJobStore store,
@@ -26,6 +41,7 @@ public sealed class RecurringJobInitializer : IRecurringJobInitializer
         _options = options;
     }
 
+    /// <inheritdoc />
     public async Task InitializeAsync(CancellationToken cancellationToken)
     {
         var recurring = _registry.GetRecurringJobs();
