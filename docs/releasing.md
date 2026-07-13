@@ -1,10 +1,12 @@
 # Releasing
 
-This guide defines the repeatable release process for DurableStack .NET packages.
+DurableStack packages are published to NuGet by the automated release workflow
+(`.github/workflows/release.yml`). Releases are driven by git tags: **the tag
+decides the version**, and nothing is packed on a developer machine.
 
 ## Scope
 
-Packable projects:
+Packable projects (all published together, always with the same version):
 
 - `DurableStack.Core`
 - `DurableStack.Hosting`
@@ -14,81 +16,65 @@ Packable projects:
 - `DurableStack.SqlServer`
 - `DurableStack.Sqlite`
 
-## Version update
+## How to release
 
-For release candidates:
+1. Merge the release content to `main` and confirm CI is green.
+2. Create a tag named `v<version>` on the commit you want to ship and push it:
 
-- set `<VersionPrefix>` to the target release (for example, `1.0.1`)
-- set `<VersionSuffix>` to `rc.<n>` (for example, `rc.1`)
+   - Stable: `v1.1.0` publishes version `1.1.0`.
+   - Release candidate: `v1.1.0-rc.1` publishes the `1.1.0-rc.1` prerelease
+     (any `-suffix` on the tag produces a NuGet prerelease and marks the
+     GitHub release as a prerelease).
 
-For GA:
+3. The release workflow then, in order:
 
-- set `<VersionPrefix>` to the target stable version (for example, `1.0.1`)
-- remove `<VersionSuffix>`
+   - validates the tag format (`vMAJOR.MINOR.PATCH[-prerelease]`);
+   - builds the solution with `-p:Version=<version>` and
+     `-p:ContinuousIntegrationBuild=true` (deterministic build);
+   - runs the full test suite on net8.0, net9.0, and net10.0 against real
+     PostgreSQL, MySQL, and SQL Server service containers — **a test failure
+     aborts the release before anything is published**;
+   - packs all seven packages and pushes them (with symbol packages) to
+     NuGet.org using the `NUGET_API_KEY` repository secret;
+   - attaches the packages to the workflow run and creates a GitHub release
+     with generated notes.
 
-Ensure all seven packable `.csproj` files use the same version values.
+There is nothing to edit in any `.csproj`: the `<VersionPrefix>` in
+`src/Directory.Build.props` is only a fallback for local developer builds and
+does not affect published versions. Bump it occasionally so local builds stay
+recognizable, but it requires no synchronization with releases.
 
-## Target frameworks
+## One-time setup
 
-Packable projects should target both:
+The workflow needs a NuGet API key with push access to the `DurableStack.*`
+package IDs, stored as a GitHub Actions secret:
 
-- `net9.0`
-- `net10.0`
+1. Create an API key at nuget.org (scope: *Push new packages and package
+   versions*, glob `DurableStack.*`).
+2. In the GitHub repository: **Settings → Secrets and variables → Actions →
+   New repository secret**, name `NUGET_API_KEY`.
 
-## Validation
+## Fixing a bad release
 
-Run:
-
-```bash
-dotnet build DurableStack.sln
-dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj
-dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj -f net9.0
-dotnet test src/DurableStack.Tests/DurableStack.Tests.csproj -f net10.0
-```
-
-Additionally, run provider integration tests against real databases before stable releases:
-
-- `DURABLESTACK_TEST_POSTGRES`
-- `DURABLESTACK_TEST_MYSQL`
-- `DURABLESTACK_TEST_SQLSERVER`
-
-SQLite integration tests run by default.
+Published NuGet versions are immutable — they can be unlisted but never
+replaced. To fix a bad release, tag and publish a new patch version. Re-running
+a release workflow is safe: `--skip-duplicate` makes already-published versions
+a no-op.
 
 ## Upgrade and rollback expectations
 
-- DurableStack migrations are additive and idempotent.
-- Upgrades are forward-safe from prior prerelease installs on the same provider.
-- Rollback is operational, not schema-down migration: restore the database from backup/snapshot taken before upgrade.
-- For production, run migrations in deployment steps before rolling app instances.
-
-## Pack
-
-```bash
-dotnet pack src/DurableStack.Core/DurableStack.Core.csproj -c Release -o artifacts/nuget/<version>
-dotnet pack src/DurableStack.Hosting/DurableStack.Hosting.csproj -c Release -o artifacts/nuget/<version>
-dotnet pack src/DurableStack.Worker/DurableStack.Worker.csproj -c Release -o artifacts/nuget/<version>
-dotnet pack src/DurableStack.Postgres/DurableStack.Postgres.csproj -c Release -o artifacts/nuget/<version>
-dotnet pack src/DurableStack.MySql/DurableStack.MySql.csproj -c Release -o artifacts/nuget/<version>
-dotnet pack src/DurableStack.SqlServer/DurableStack.SqlServer.csproj -c Release -o artifacts/nuget/<version>
-dotnet pack src/DurableStack.Sqlite/DurableStack.Sqlite.csproj -c Release -o artifacts/nuget/<version>
-```
-
-Optional pre-push validation (inspect package metadata and target frameworks):
-
-```bash
-dotnet nuget list source
-```
-
-## Push
-
-```bash
-dotnet nuget push "artifacts/nuget/<version>/*.nupkg" --source "https://api.nuget.org/v3/index.json" --skip-duplicate
-```
-
-If wildcard expansion is unsupported in your shell, loop over files and push each path explicitly.
+- DurableStack migrations are versioned (see the
+  `durable_stack_schema_migrations` table), applied exactly once under a
+  provider-native migration lock, and safe under concurrent worker startup.
+- Upgrades are forward-safe from prior releases on the same provider.
+- Rollback is operational, not schema-down migration: restore the database
+  from a backup/snapshot taken before upgrade.
+- For production, run migrations in deployment steps before rolling app
+  instances.
 
 ## Notes
 
-- CI does not auto-publish packages.
-- Symbol packages (`.snupkg`) may report duplicate conflicts if pushed more than once.
-- Keep docs and examples aligned with any API or behavior changes included in the release.
+- The `ci` workflow builds and tests every push and pull request but never
+  publishes; only `release` (tag push) publishes.
+- Keep docs and examples aligned with any API or behavior changes included in
+  the release.

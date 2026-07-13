@@ -17,6 +17,13 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Hosting.Events;
 
+/// <summary>
+/// Background service that drains buffered events from <see cref="IngestionDurableStackEventSink"/>
+/// and posts them in batches to the hosted DurableStack observability API. The service is a no-op
+/// unless <c>Eventing.TenantId</c> and <c>Eventing.ClientSecret</c> are configured. Non-loopback
+/// ingestion endpoints must use HTTPS because requests carry tenant credentials; transient failures
+/// are retried with exponential backoff, and worker heartbeats are collapsed into a single batch event.
+/// </summary>
 public sealed class IngestionEventSyncHostedService : BackgroundService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -30,9 +37,21 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
     private readonly ILogger<IngestionEventSyncHostedService> _logger;
     private readonly string _runtime;
     private readonly string _runtimeVersion;
+    private readonly Uri _ingestionBaseUri;
     private readonly Random _random = new();
     private int _sequence;
 
+    /// <summary>
+    /// Creates the service, locating the ingestion sink among the registered event sinks and
+    /// validating the configured ingestion base URL at startup.
+    /// </summary>
+    /// <param name="sinks">Registered event sinks; the first <see cref="IngestionDurableStackEventSink"/> found is drained by this service.</param>
+    /// <param name="options">Worker options supplying the <c>Eventing</c> ingestion settings.</param>
+    /// <param name="httpClientFactory">Factory used to create the HTTP client for ingestion requests.</param>
+    /// <param name="logger">Logger for sync-loop diagnostics.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <c>Eventing.IngestionApiBaseUrl</c> is not an absolute URL, or uses HTTP for a non-loopback host.
+    /// </exception>
     public IngestionEventSyncHostedService(
         IEnumerable<IDurableStackEventSink> sinks,
         DurableStackOptions options,
@@ -45,8 +64,50 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         _logger = logger;
         _runtime = RuntimeInformation.FrameworkDescription;
         _runtimeVersion = Environment.Version.ToString();
+        _ingestionBaseUri = ValidateIngestionBaseUrl(options.Eventing.IngestionApiBaseUrl);
     }
 
+    private static Uri ValidateIngestionBaseUrl(string ingestionApiBaseUrl)
+    {
+        // Fail at startup rather than looping error logs at first flush, and refuse to
+        // send tenant credentials over cleartext HTTP (loopback excepted for local
+        // development against a dev ingestion endpoint).
+        if (!Uri.TryCreate(ingestionApiBaseUrl, UriKind.Absolute, out var uri))
+        {
+            throw new ArgumentException(
+                $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' is not a valid absolute URL.",
+                nameof(ingestionApiBaseUrl));
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttps)
+        {
+            return uri;
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)
+        {
+            return uri;
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttp)
+        {
+            throw new ArgumentException(
+                $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' must use https (the ingestion request carries tenant credentials); http is only permitted for loopback addresses.",
+                nameof(ingestionApiBaseUrl));
+        }
+
+        throw new ArgumentException(
+            $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' must be an absolute http(s) URL.",
+            nameof(ingestionApiBaseUrl));
+
+    }
+
+    /// <summary>
+    /// Runs the flush loop: reads buffered events up to the configured batch size, posts them to the
+    /// ingestion endpoint, then waits for the configured flush interval. Exits immediately when tenant
+    /// credentials or the ingestion sink are missing, and attempts one final flush on shutdown.
+    /// </summary>
+    /// <param name="stoppingToken">Signals that the host is shutting down.</param>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (string.IsNullOrWhiteSpace(_options.Eventing.TenantId) || string.IsNullOrWhiteSpace(_options.Eventing.ClientSecret))
@@ -145,8 +206,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
     private async Task<bool> PostWithRetryAsync(string payload, string idempotencyKey, int eventCount, CancellationToken cancellationToken)
     {
         using var client = _httpClientFactory.CreateClient(nameof(IngestionEventSyncHostedService));
-        var baseUri = new Uri(_options.Eventing.IngestionApiBaseUrl, UriKind.Absolute);
-        var endpoint = new Uri(baseUri, _options.Eventing.IngestionPath);
+        var endpoint = new Uri(_ingestionBaseUri, _options.Eventing.IngestionPath);
 
         var maxAttempts = Math.Clamp(_options.Eventing.IngestionMaxRetryAttempts, 1, 10);
 
@@ -250,7 +310,9 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                 RuntimeVersion = _runtimeVersion,
                 DurationMs = evt.DurationMs,
                 ErrorType = evt.ErrorType,
-                ErrorMessage = evt.Message,
+                // ErrorMessage is the redaction-gated exception message (null unless
+                // Eventing.IncludeErrorDetail is on); Message stays benign event text.
+                ErrorMessage = evt.ErrorMessage,
                 PayloadJson = BuildPayloadJson(evt),
             });
         }
@@ -288,6 +350,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         {
             ["message"] = evt.Message,
             ["errorType"] = evt.ErrorType,
+            ["errorMessage"] = evt.ErrorMessage,
             ["errorDetail"] = evt.ErrorDetail,
             ["durationMs"] = evt.DurationMs,
             ["retryAtUtc"] = evt.RetryAtUtc,

@@ -10,12 +10,11 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <TargetFrameworks>net9.0;net10.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
     <PackageId>DurableStack.SqlServer</PackageId>
-    <VersionPrefix>1.0.1</VersionPrefix>
     <Authors>DurableStack</Authors>
     <Company>DurableStack</Company>
     <Description>SQL Server provider for DurableStack durable job storage and claiming.</Description>

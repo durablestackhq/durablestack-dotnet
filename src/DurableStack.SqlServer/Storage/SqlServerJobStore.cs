@@ -10,6 +10,15 @@ using Microsoft.Data.SqlClient;
 
 namespace DurableStack.SqlServer.Storage;
 
+/// <summary>
+/// SQL Server-backed job store. Due runs are claimed with UPDLOCK/READPAST/ROWLOCK
+/// hints, so concurrent workers skip rather than block on rows another worker is
+/// claiming, and leases are evaluated against the database clock (SYSUTCDATETIME()).
+/// Lease durations are rounded up to whole seconds, and datetime parameters are sent
+/// explicitly as datetime2. Tables live in the dbo schema. Completion writes are
+/// lease-fenced, and a run whose lease expired with no attempts remaining is failed
+/// terminally at claim time rather than reclaimed.
+/// </summary>
 public sealed class SqlServerJobStore : IDurableJobStore
 {
     private const string ExhaustedLeaseErrorMessage =
@@ -22,7 +31,17 @@ public sealed class SqlServerJobStore : IDurableJobStore
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
+    // v1: initial schema. v2: drop the never-used job_locks table (sp_getapplock is
+    // used instead).
+    private const int CurrentSchemaVersion = 2;
+
+    /// <summary>
+    /// Initializes the store from the configured options. Requires a SQL Server connection
+    /// string; table names are resolved from the configured table prefix and qualified
+    /// with the dbo schema.
+    /// </summary>
     public SqlServerJobStore(DurableStackOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -40,8 +59,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
         _jobsTable = Qualify(_jobsTableName);
         _runsTable = Qualify(_runsTableName);
         _locksTable = Qualify(_locksTableName);
+        _migrationsTable = Qualify(SqlServerTableNameResolver.Migrations(options));
     }
 
+    /// <inheritdoc />
     public async Task<Guid> EnqueueAsync(
         string jobName,
         string jobType,
@@ -92,6 +113,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runId;
     }
 
+    /// <inheritdoc />
     public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
         string jobName,
         string jobType,
@@ -152,6 +174,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return affected > 0 ? runId : null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -247,6 +270,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         // Fenced write: only the current lease owner may record the outcome, so a
@@ -274,6 +298,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -298,6 +323,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkFailedAsync(
         Guid runId,
         string workerName,
@@ -366,6 +392,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -402,6 +429,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -439,6 +467,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
         int take,
@@ -482,6 +511,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -522,6 +552,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
         string status,
         int take,
@@ -565,6 +596,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -606,6 +638,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
@@ -657,6 +690,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task<bool> SetRecurringJobEnabledAsync(
         string jobName,
         bool enabled,
@@ -683,6 +717,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> UpdateRecurringJobScheduleAsync(
         string jobName,
         string cronExpression,
@@ -712,6 +747,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<int> PruneHistoricalRunsAsync(
         DateTimeOffset completedBeforeUtc,
         int batchSize,
@@ -741,6 +777,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -818,6 +855,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             UtcDateTime2Parameter("@next_run_at_utc", nextRunAtUtc.UtcDateTime));
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetDueRecurringJobsAsync(
         DateTimeOffset nowUtc,
         int batchSize,
@@ -872,6 +910,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task UpdateRecurringNextRunAsync(
         string jobName,
         DateTimeOffset nextRunAtUtc,
@@ -892,6 +931,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
             new SqlParameter("@name", jobName));
     }
 
+    /// <inheritdoc />
     public async Task<bool> TryMaterializeRecurringRunAsync(
         RecurringJobState recurring,
         DurableJobRegistration registration,
@@ -985,6 +1025,7 @@ public sealed class SqlServerJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
@@ -1012,10 +1053,110 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <summary>
+    /// Creates or upgrades the schema to the current version, recording each applied
+    /// version in the schema migrations table. Concurrent workers are serialized with
+    /// sp_getapplock, and SQL Server's transactional DDL applies each migration atomically.
+    /// Returns without locking when the schema is already current.
+    /// </summary>
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await EnsureSchemaVersionTableAsync(connection, cancellationToken);
+        if (await GetSchemaVersionAsync(connection, null, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // sp_getapplock serializes concurrent workers booting at once; SQL Server DDL
+        // is transactional, so a mid-migration crash leaves no partial schema.
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        var lockSql = """
+            declare @result int;
+            exec @result = sp_getapplock @Resource = @resource, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 60000;
+            if @result < 0
+                throw 51000, 'Timed out acquiring the DurableStack migration lock.', 1;
+            """;
+        await using (var lockCommand = new SqlCommand(lockSql, connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue("@resource", $"durablestack_migration_{_runsTableName}");
+            await lockCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var version = await GetSchemaVersionAsync(connection, transaction, cancellationToken);
+
+        if (version < 1)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildInitMigrationSql(), 1, cancellationToken);
+        }
+
+        if (version < 2)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task ExecuteMigrationStepAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        string sql,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using (var migrate = new SqlCommand(sql, connection, transaction))
+        {
+            await migrate.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var record = new SqlCommand(
+            $"if not exists (select 1 from {_migrationsTable} where version = @version) insert into {_migrationsTable} (version, applied_at_utc) values (@version, SYSUTCDATETIME());",
+            connection,
+            transaction))
+        {
+            record.Parameters.AddWithValue("@version", version);
+            await record.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private async Task EnsureSchemaVersionTableAsync(SqlConnection connection, CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            if object_id(N'{_migrationsTable}', N'U') is null
+            begin
+                create table {_migrationsTable} (
+                    version int not null primary key,
+                    applied_at_utc datetime2(6) not null default SYSUTCDATETIME()
+                );
+            end
+            """;
+
+        try
+        {
+            await using var command = new SqlCommand(sql, connection);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+        catch (SqlException ex) when (ex.Number is 2714)
+        {
+            // 2714: object already exists — another worker won the create race.
+        }
+    }
+
+    private async Task<int> GetSchemaVersionAsync(
+        SqlConnection connection,
+        SqlTransaction? transaction,
+        CancellationToken cancellationToken)
+    {
+        await using var command = new SqlCommand(
+            $"select coalesce(max(version), 0) from {_migrationsTable};",
+            connection,
+            transaction);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqlParameter[] parameters)
@@ -1148,7 +1289,6 @@ public sealed class SqlServerJobStore : IDurableJobStore
     {
         var jobsObject = TableObjectName(_jobsTableName);
         var runsObject = TableObjectName(_runsTableName);
-        var locksObject = TableObjectName(_locksTableName);
 
         var runsDueIndexName = $"ix_{_runsTableName}_due";
         var runsLeaseIndexName = $"ix_{_runsTableName}_lease";
@@ -1270,16 +1410,6 @@ public sealed class SqlServerJobStore : IDurableJobStore
             if not exists (select 1 from sys.indexes where name = N'{runsRecurringUniqueIndexName}' and object_id = object_id(N'{runsObject}'))
             begin
                 create unique index [{runsRecurringUniqueIndexName}] on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;
-            end;
-
-            if object_id(N'{locksObject}', N'U') is null
-            begin
-                create table {_locksTable} (
-                    lock_key nvarchar(256) not null primary key,
-                    owner nvarchar(256) not null,
-                    lease_until_utc datetime2(7) not null,
-                    updated_at_utc datetime2(7) not null constraint DF_{_locksTableName}_updated_at_utc default SYSUTCDATETIME()
-                );
             end;
             """;
     }

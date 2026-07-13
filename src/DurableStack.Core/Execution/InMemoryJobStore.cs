@@ -8,12 +8,20 @@ using DurableStack.Core.Models;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Non-durable, single-process job store used as the default when no database provider is
+/// configured. All state lives in process memory behind a single lock: nothing survives a
+/// restart, and multiple workers cannot share it — use a database-backed store for
+/// production. Semantics mirror the durable stores, including lease-fenced completion
+/// writes, poison-run quarantine on claim, and optimistic recurring-run materialization.
+/// </summary>
 public sealed class InMemoryJobStore : IDurableJobStore
 {
     private readonly object _gate = new();
     private readonly Dictionary<Guid, JobRunRecord> _runs = new();
     private readonly Dictionary<string, RecurringJobState> _recurring = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <inheritdoc />
     public Task<Guid> EnqueueAsync(
         string jobName,
         string jobType,
@@ -42,6 +50,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.FromResult(run.Id);
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -95,6 +104,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.FromResult<IReadOnlyList<JobRunRecord>>(claimed);
     }
 
+    /// <inheritdoc />
     public Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         lock (_gate)
@@ -113,6 +123,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         lock (_gate)
@@ -136,6 +147,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<bool> MarkFailedAsync(
         Guid runId,
         string workerName,
@@ -187,6 +199,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return false;
     }
 
+    /// <inheritdoc />
     public Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         lock (_gate)
@@ -200,6 +213,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.FromResult<JobRunRecord?>(null);
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken)
     {
         lock (_gate)
@@ -209,6 +223,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -225,6 +240,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
         int take,
@@ -243,6 +259,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
         string status,
         int take,
@@ -261,6 +278,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -278,6 +296,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<Guid?> TryEnqueueIfNoActiveRunAsync(
         string jobName,
         string jobType,
@@ -314,6 +333,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
@@ -330,6 +350,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<bool> SetRecurringJobEnabledAsync(
         string jobName,
         bool enabled,
@@ -362,6 +383,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<bool> UpdateRecurringJobScheduleAsync(
         string jobName,
         string cronExpression,
@@ -394,6 +416,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<int> PruneHistoricalRunsAsync(
         DateTimeOffset completedBeforeUtc,
         int batchSize,
@@ -420,6 +443,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -450,6 +474,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc />
     public Task<IReadOnlyList<RecurringJobState>> GetDueRecurringJobsAsync(
         DateTimeOffset nowUtc,
         int batchSize,
@@ -469,6 +494,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task UpdateRecurringNextRunAsync(
         string jobName,
         DateTimeOffset nextRunAtUtc,
@@ -485,6 +511,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         return Task.CompletedTask;
     }
 
+    /// <inheritdoc />
     public Task<bool> TryMaterializeRecurringRunAsync(
         RecurringJobState recurring,
         DurableJobRegistration registration,
@@ -533,6 +560,7 @@ public sealed class InMemoryJobStore : IDurableJobStore
         }
     }
 
+    /// <inheritdoc />
     public Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,

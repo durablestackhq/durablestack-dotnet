@@ -12,16 +12,33 @@ using Microsoft.Data.Sqlite;
 
 namespace DurableStack.Sqlite.Storage;
 
+/// <summary>
+/// SQLite-backed job store intended for single-node or dev/test scenarios. SQLite's
+/// single-writer immediate transactions serialize claiming, so concurrent workers on
+/// the same database cannot double-claim, and leases are evaluated against the
+/// worker's clock (UTC). Timestamps are stored as ISO-8601 UTC text. Completion writes
+/// are lease-fenced, and a run whose lease expired with no attempts remaining is
+/// failed terminally at claim time rather than reclaimed.
+/// </summary>
 public sealed class SqliteJobStore : IDurableJobStore
 {
     private const string ExhaustedLeaseErrorMessage =
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
+    // v1: initial schema. v2: drop the never-used job_locks table (SQLite's
+    // single-writer transaction is used instead).
+    private const int CurrentSchemaVersion = 2;
+
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
+    private readonly string _migrationsTable;
 
+    /// <summary>
+    /// Initializes the store from the configured options. Requires a SQLite connection
+    /// string; table names are resolved from the configured table prefix.
+    /// </summary>
     public SqliteJobStore(DurableStackOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
@@ -35,8 +52,10 @@ public sealed class SqliteJobStore : IDurableJobStore
         _jobsTable = Quote(SqliteTableNameResolver.Jobs(options));
         _runsTable = Quote(SqliteTableNameResolver.Runs(options));
         _locksTable = Quote(SqliteTableNameResolver.Locks(options));
+        _migrationsTable = Quote(SqliteTableNameResolver.Migrations(options));
     }
 
+    /// <inheritdoc />
     public async Task<Guid> EnqueueAsync(
         string jobName,
         string jobType,
@@ -90,6 +109,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runId;
     }
 
+    /// <inheritdoc />
     public async Task<Guid?> TryEnqueueIfNoActiveRunAsync(
         string jobName,
         string jobType,
@@ -149,6 +169,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return affected > 0 ? runId : null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> ClaimDueRunsAsync(
         string workerName,
         int batchSize,
@@ -297,6 +318,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return claimed;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkSucceededAsync(Guid runId, string workerName, CancellationToken cancellationToken)
     {
         var nowUtc = DateTimeOffset.UtcNow;
@@ -327,6 +349,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var nowUtc = DateTimeOffset.UtcNow;
@@ -354,6 +377,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> MarkFailedAsync(
         Guid runId,
         string workerName,
@@ -425,6 +449,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
     public async Task<JobRunRecord?> GetRunAsync(Guid runId, CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -461,6 +486,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return null;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsAsync(CancellationToken cancellationToken)
     {
         var sql = $"""
@@ -497,6 +523,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByJobNameAsync(
         string jobName,
         int take,
@@ -541,6 +568,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRecentRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -582,6 +610,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetRunsByStatusAsync(
         string status,
         int take,
@@ -626,6 +655,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<JobRunRecord>> GetEnqueuedRunsAsync(
         int take,
         CancellationToken cancellationToken)
@@ -668,6 +698,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return runs;
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetRecurringJobsAsync(
         bool includeDisabled,
         CancellationToken cancellationToken)
@@ -719,6 +750,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task<bool> SetRecurringJobEnabledAsync(
         string jobName,
         bool enabled,
@@ -746,6 +778,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<bool> UpdateRecurringJobScheduleAsync(
         string jobName,
         string cronExpression,
@@ -776,6 +809,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    /// <inheritdoc />
     public async Task<int> PruneHistoricalRunsAsync(
         DateTimeOffset completedBeforeUtc,
         int batchSize,
@@ -803,6 +837,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task UpsertRecurringJobAsync(
         DurableJobRegistration registration,
         DateTimeOffset nextRunAtUtc,
@@ -877,6 +912,7 @@ public sealed class SqliteJobStore : IDurableJobStore
             new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
     }
 
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RecurringJobState>> GetDueRecurringJobsAsync(
         DateTimeOffset nowUtc,
         int batchSize,
@@ -932,6 +968,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return jobs;
     }
 
+    /// <inheritdoc />
     public async Task UpdateRecurringNextRunAsync(
         string jobName,
         DateTimeOffset nextRunAtUtc,
@@ -954,6 +991,7 @@ public sealed class SqliteJobStore : IDurableJobStore
             new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
     }
 
+    /// <inheritdoc />
     public async Task<bool> TryMaterializeRecurringRunAsync(
         RecurringJobState recurring,
         DurableJobRegistration registration,
@@ -1064,6 +1102,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         return true;
     }
 
+    /// <inheritdoc />
     public async Task<bool> ExtendLeaseAsync(
         Guid runId,
         string workerName,
@@ -1093,11 +1132,85 @@ public sealed class SqliteJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <summary>
+    /// Creates or upgrades the schema to the current version, recording each applied
+    /// version in the schema migrations table. SQLite's single-writer transaction
+    /// serializes concurrent migrators, and its transactional DDL applies each migration
+    /// atomically. Returns when the schema is already current.
+    /// </summary>
     public async Task EnsureMigrationsAppliedAsync(CancellationToken cancellationToken)
     {
-        var migrationSql = BuildInitMigrationSql();
-        await ExecuteNonQueryAsync(migrationSql, cancellationToken);
-        await EnsureAllowConcurrentRunsColumnAsync(cancellationToken);
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using (var versionTable = new SqliteCommand(
+            $"create table if not exists {_migrationsTable} (version integer primary key, applied_at_utc text not null);",
+            connection))
+        {
+            await versionTable.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (await GetSchemaVersionAsync(connection, cancellationToken) >= CurrentSchemaVersion)
+        {
+            return;
+        }
+
+        // SQLite's single-writer transaction (BEGIN IMMEDIATE) serializes concurrent
+        // migrators, and its transactional DDL makes the migration atomic.
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        var version = await GetSchemaVersionAsync(connection, cancellationToken, transaction);
+
+        if (version < 1)
+        {
+            await using (var migrate = new SqliteCommand(BuildInitMigrationSql(), connection, transaction))
+            {
+                await migrate.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await EnsureAllowConcurrentRunsColumnAsync(connection, transaction, cancellationToken);
+            await RecordSchemaVersionAsync(connection, transaction, 1, cancellationToken);
+        }
+
+        if (version < 2)
+        {
+            await using (var drop = new SqliteCommand($"drop table if exists {_locksTable};", connection, transaction))
+            {
+                await drop.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await RecordSchemaVersionAsync(connection, transaction, 2, cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task RecordSchemaVersionAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        int version,
+        CancellationToken cancellationToken)
+    {
+        await using var record = new SqliteCommand(
+            $"insert or ignore into {_migrationsTable} (version, applied_at_utc) values (@version, @applied_at_utc);",
+            connection,
+            transaction);
+        record.Parameters.AddWithValue("@version", version);
+        record.Parameters.AddWithValue("@applied_at_utc", ToDbTimestamp(DateTimeOffset.UtcNow));
+        await record.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    private async Task<int> GetSchemaVersionAsync(
+        SqliteConnection connection,
+        CancellationToken cancellationToken,
+        SqliteTransaction? transaction = null)
+    {
+        await using var command = new SqliteCommand(
+            $"select coalesce(max(version), 0) from {_migrationsTable};",
+            connection,
+            transaction);
+        var result = await command.ExecuteScalarAsync(cancellationToken);
+        return Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture);
     }
 
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params SqliteParameter[] parameters)
@@ -1268,54 +1381,47 @@ public sealed class SqliteJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_completed")} on {_runsTable} (status, completed_at_utc);");
         sb.AppendLine($"create unique index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
 
-        sb.AppendLine($"create table if not exists {_locksTable} (");
-        sb.AppendLine("    lock_key text primary key,");
-        sb.AppendLine("    owner text not null,");
-        sb.AppendLine("    lease_until_utc text not null,");
-        sb.AppendLine("    updated_at_utc text not null");
-        sb.AppendLine(");");
-
         return sb.ToString();
     }
 
-    private async Task EnsureAllowConcurrentRunsColumnAsync(CancellationToken cancellationToken)
+    private async Task EnsureAllowConcurrentRunsColumnAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
     {
-        await using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(cancellationToken);
-
-        if (!await HasColumnAsync(connection, "allow_concurrent_runs", cancellationToken))
+        if (!await HasColumnAsync(connection, transaction, "allow_concurrent_runs", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} add column allow_concurrent_runs integer not null default 0;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (!await HasColumnAsync(connection, "retry_behavior", cancellationToken))
+        if (!await HasColumnAsync(connection, transaction, "retry_behavior", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} add column retry_behavior text null;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (!await HasColumnAsync(connection, "retry_initial_delay_seconds", cancellationToken))
+        if (!await HasColumnAsync(connection, transaction, "retry_initial_delay_seconds", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} add column retry_initial_delay_seconds integer null;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        if (await HasColumnAsync(connection, "retry_backoff_seconds", cancellationToken))
+        if (await HasColumnAsync(connection, transaction, "retry_backoff_seconds", cancellationToken))
         {
             var sql = $"alter table {_jobsTable} drop column retry_backoff_seconds;";
-            await using var command = new SqliteCommand(sql, connection);
+            await using var command = new SqliteCommand(sql, connection, transaction);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
     }
 
-    private async Task<bool> HasColumnAsync(SqliteConnection connection, string columnName, CancellationToken cancellationToken)
+    private async Task<bool> HasColumnAsync(SqliteConnection connection, SqliteTransaction transaction, string columnName, CancellationToken cancellationToken)
     {
         var pragmaSql = $"PRAGMA table_info({_jobsTable});";
-        await using var pragma = new SqliteCommand(pragmaSql, connection);
+        await using var pragma = new SqliteCommand(pragmaSql, connection, transaction);
         await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {

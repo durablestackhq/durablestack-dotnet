@@ -48,6 +48,7 @@ public sealed class DurableStackProcessorTests
 
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         var processed = await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
 
         Assert.Equal(1, processed);
         Assert.Single(TestNoArgsJob.Executions, c => c.RunId == runId);
@@ -101,6 +102,7 @@ public sealed class DurableStackProcessorTests
 
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
 
         Assert.Equal(1, AlwaysFailJob.ExecutionCount);
         var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
@@ -113,6 +115,7 @@ public sealed class DurableStackProcessorTests
         Assert.Contains(events.Events, e => e.EventType == DurableStackEventTypes.RetryScheduled);
         var failedEvent = Assert.Single(events.Events, e => e.EventType == DurableStackEventTypes.JobFailed);
         Assert.NotNull(failedEvent.ErrorType);
+        Assert.Null(failedEvent.ErrorMessage);
         Assert.Null(failedEvent.ErrorDetail);
         Assert.NotNull(failedEvent.RetryAtUtc);
         var retryEvent = Assert.Single(events.Events, e => e.EventType == DurableStackEventTypes.RetryScheduled);
@@ -152,6 +155,7 @@ public sealed class DurableStackProcessorTests
 
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
 
         var run = Assert.Single(await store.GetRunsAsync(CancellationToken.None));
         Assert.Equal("failed", run.Status);
@@ -162,6 +166,7 @@ public sealed class DurableStackProcessorTests
         Assert.DoesNotContain(events.Events, e => e.EventType == DurableStackEventTypes.RetryScheduled);
         var failedEvent = Assert.Single(events.Events, e => e.EventType == DurableStackEventTypes.JobFailed);
         Assert.NotNull(failedEvent.ErrorType);
+        Assert.Null(failedEvent.ErrorMessage);
         Assert.Null(failedEvent.ErrorDetail);
         Assert.Null(failedEvent.RetryAtUtc);
     }
@@ -203,6 +208,7 @@ public sealed class DurableStackProcessorTests
 
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         var processed = await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
 
         Assert.Equal(1, processed);
         Assert.Single(TestNoArgsJob.Executions, c => c.RunId == runId && c.Attempt == 2);
@@ -366,11 +372,13 @@ public sealed class DurableStackProcessorTests
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
         var beforeFirst = DateTimeOffset.UtcNow;
         await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
         var firstRetryAt = (await store.GetRunsAsync(CancellationToken.None)).Single().ScheduledForUtc;
 
         await Task.Delay(1200);
         var beforeSecond = DateTimeOffset.UtcNow;
         await processor.ProcessOnceAsync(CancellationToken.None);
+        await processor.DrainInFlightRunsAsync(CancellationToken.None);
         var secondRetryAt = (await store.GetRunsAsync(CancellationToken.None)).Single().ScheduledForUtc;
 
         var firstDelay = firstRetryAt - beforeFirst;

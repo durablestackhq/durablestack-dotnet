@@ -21,11 +21,14 @@ dotnet add package DurableStack.Hosting
 ```
 
 ```csharp
+using DurableStack.Hosting.DependencyInjection;
+
 services.AddDurableStack(options =>
 {
-    options.UsePostgreSql(connectionString);
+    options.UsePostgres(connectionString);
     // Optional: Connect to hosted observability
-    // options.TenantId = "...";
+    // options.Eventing.TenantId = "...";
+    // options.Eventing.ClientSecret = "...";
 });
 ```
 
@@ -35,6 +38,7 @@ See the [full Quickstart](https://docs.durablestack.com/docs/latest/dotnet/quick
 
 - Durable one-off, delayed, and recurring (cron) jobs with timezone support.
 - Retry policies, terminal failure handling, and distributed worker coordination.
+- Targets .NET `8`, `9`, and `10`.
 - Multi-provider support (PostgreSQL, MySQL, SQL Server, SQLite, InMemory).
 - OpenTelemetry + custom event sinks.
 - Hosted observability platform (free tier available).
@@ -59,7 +63,7 @@ Full comparison → [durablestack.com/alternatives](https://durablestack.com/alt
 
 ## Status
 
-v1.0.1 is now available! This marks our first stable 1.0 release. API is expected to stabilize further with community feedback.
+DurableStack is in the stable `1.x` line and published via automated tag-driven CI releases.
 
 ## Community & Support
 
