@@ -18,6 +18,13 @@
          pinned dependency stays visible without hard-failing a release build. -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <WarningsNotAsErrors>NU1900;NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
+
+    <!-- Include a shared package icon in all NuGet packages produced from src/. -->
+    <PackageIcon>ds-nuget-logo.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)..\ds-nuget-logo.png" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
 </Project>
