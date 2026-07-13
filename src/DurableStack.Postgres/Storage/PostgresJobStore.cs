@@ -1240,10 +1240,11 @@ public sealed class PostgresJobStore : IDurableJobStore
             await using var command = new NpgsqlCommand(sql, connection);
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
-        catch (PostgresException ex) when (ex.SqlState is "23505" or "42P07")
+        catch (PostgresException ex) when (ex.SqlState is "23505" or "42P07" or "42710")
         {
             // Concurrent CREATE TABLE IF NOT EXISTS can still race on the catalog
-            // (duplicate pg_type key / duplicate table); the table exists either way.
+            // (duplicate pg_type key / duplicate table / duplicate_object); the
+            // table exists either way.
         }
     }
 
