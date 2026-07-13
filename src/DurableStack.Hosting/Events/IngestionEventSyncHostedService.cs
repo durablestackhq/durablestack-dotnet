@@ -79,14 +79,27 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                 nameof(ingestionApiBaseUrl));
         }
 
-        if (uri.Scheme != Uri.UriSchemeHttps && !uri.IsLoopback)
+        if (uri.Scheme == Uri.UriSchemeHttps)
+        {
+            return uri;
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)
+        {
+            return uri;
+        }
+
+        if (uri.Scheme == Uri.UriSchemeHttp)
         {
             throw new ArgumentException(
                 $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' must use https (the ingestion request carries tenant credentials); http is only permitted for loopback addresses.",
                 nameof(ingestionApiBaseUrl));
         }
 
-        return uri;
+        throw new ArgumentException(
+            $"Eventing.IngestionApiBaseUrl '{ingestionApiBaseUrl}' must be an absolute http(s) URL.",
+            nameof(ingestionApiBaseUrl));
+
     }
 
     /// <summary>
