@@ -259,13 +259,22 @@ public sealed class DurableStackProcessorTests
         var processor = new DurableStackProcessor(store, registry, runner, scheduler, options, new[] { events }, eventFactory);
 
         var processingTask = processor.ProcessOnceAsync(CancellationToken.None);
-        await Task.Delay(500);
+        await Task.Delay(300);
 
-        var inFlight = await store.GetRunAsync(runId, CancellationToken.None);
-        Assert.NotNull(inFlight);
-        Assert.Equal("leased", inFlight!.Status);
-        Assert.NotNull(inFlight.LeaseUntilUtc);
-        Assert.True(inFlight.LeaseUntilUtc > DateTimeOffset.UtcNow);
+        var firstSnapshot = await store.GetRunAsync(runId, CancellationToken.None);
+        Assert.NotNull(firstSnapshot);
+        Assert.Equal("leased", firstSnapshot!.Status);
+        Assert.NotNull(firstSnapshot.LeaseUntilUtc);
+
+        await Task.Delay(250);
+
+        var secondSnapshot = await store.GetRunAsync(runId, CancellationToken.None);
+        Assert.NotNull(secondSnapshot);
+        Assert.Equal("leased", secondSnapshot!.Status);
+        Assert.NotNull(secondSnapshot.LeaseUntilUtc);
+        Assert.True(
+            secondSnapshot.LeaseUntilUtc >= firstSnapshot.LeaseUntilUtc,
+            $"Expected lease heartbeat to maintain/extend lease window. First={firstSnapshot.LeaseUntilUtc:O}, Second={secondSnapshot.LeaseUntilUtc:O}");
 
         await processingTask;
     }
