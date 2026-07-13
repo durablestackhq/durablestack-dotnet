@@ -7,12 +7,23 @@ using DurableStack.Core.Scheduling;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Thread-safe registry of job registrations, indexed by name (case-insensitive) and by CLR
+/// type. Recurring registrations are validated eagerly — the time zone must resolve and the
+/// cron expression must yield a next occurrence — so misconfiguration fails at registration
+/// time rather than when the scheduler first runs. Duplicate names or types are rejected.
+/// </summary>
 public sealed class DurableStackJobRegistry : IDurableJobRegistry
 {
     private readonly Dictionary<string, DurableJobRegistration> _byName = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<Type, DurableJobRegistration> _byType = new();
     private readonly object _gate = new();
 
+    /// <summary>
+    /// Creates a registry pre-populated with the given registrations, validating each one
+    /// as if it had been registered individually.
+    /// </summary>
+    /// <param name="registrations">Registrations to add, typically collected from dependency injection.</param>
     public DurableStackJobRegistry(IEnumerable<DurableJobRegistration> registrations)
     {
         foreach (var registration in registrations)
@@ -21,6 +32,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public void Register<TJob>(string jobName, int maxAttempts = 3)
         where TJob : class, IDurableJob
     {
@@ -38,6 +50,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public void Register<TJob, TArgs>(string jobName, int maxAttempts = 3)
         where TJob : class, IDurableJob<TArgs>
     {
@@ -55,6 +68,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public DurableJobRegistration? FindByName(string jobName)
     {
         lock (_gate)
@@ -64,6 +78,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public DurableJobRegistration? FindByJobType(Type jobType)
     {
         lock (_gate)
@@ -73,6 +88,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public void RegisterRecurring<TJob>(
         string jobName,
         string cronExpression,
@@ -100,6 +116,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public void RegisterRecurring<TJob, TArgs>(
         string jobName,
         string cronExpression,
@@ -127,6 +144,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public IReadOnlyList<DurableJobRegistration> GetRecurringJobs()
     {
         lock (_gate)
@@ -135,6 +153,7 @@ public sealed class DurableStackJobRegistry : IDurableJobRegistry
         }
     }
 
+    /// <inheritdoc />
     public IReadOnlyList<DurableJobRegistration> GetAllJobs()
     {
         lock (_gate)

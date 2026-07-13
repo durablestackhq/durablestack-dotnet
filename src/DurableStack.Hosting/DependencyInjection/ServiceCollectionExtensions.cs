@@ -24,8 +24,24 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Hosting.DependencyInjection;
 
+/// <summary>
+/// Extension methods for registering the DurableStack worker, job store, and jobs with an
+/// <see cref="IServiceCollection"/>. <c>AddDurableStack</c> (or a provider-specific variant such as
+/// <c>AddDurableStackPostgres</c>) is the main entry point for consuming applications; individual jobs
+/// are then registered with <c>AddDurableJob</c> or discovered automatically from the entry assembly.
+/// </summary>
 public static class ServiceCollectionExtensions
 {
+    /// <summary>
+    /// Registers DurableStack backed by PostgreSQL. Binds the <c>DurableStack</c> configuration
+    /// section, takes the connection string from <c>DurableStack:Postgres:ConnectionString</c>,
+    /// and otherwise behaves like <see cref="AddDurableStack(IServiceCollection, IConfiguration, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="configuration">Application configuration containing the <c>DurableStack</c> section.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no PostgreSQL connection string is configured.</exception>
     public static IServiceCollection AddDurableStackPostgres(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -45,6 +61,16 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by SQL Server. Binds the <c>DurableStack</c> configuration
+    /// section, takes the connection string from <c>DurableStack:SqlServer:ConnectionString</c>,
+    /// and otherwise behaves like <see cref="AddDurableStack(IServiceCollection, IConfiguration, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="configuration">Application configuration containing the <c>DurableStack</c> section.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no SQL Server connection string is configured.</exception>
     public static IServiceCollection AddDurableStackSqlServer(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -64,6 +90,16 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by MySQL. Binds the <c>DurableStack</c> configuration
+    /// section, takes the connection string from <c>DurableStack:MySql:ConnectionString</c>,
+    /// and otherwise behaves like <see cref="AddDurableStack(IServiceCollection, IConfiguration, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="configuration">Application configuration containing the <c>DurableStack</c> section.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no MySQL connection string is configured.</exception>
     public static IServiceCollection AddDurableStackMySql(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -83,6 +119,18 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by PostgreSQL using an explicit connection string. If the service
+    /// collection already contains an <see cref="IConfiguration"/> instance, its <c>DurableStack</c>
+    /// section is bound first; the <paramref name="connectionString"/> argument takes precedence over
+    /// <c>DurableStack:Postgres:ConnectionString</c>. Otherwise behaves like
+    /// <see cref="AddDurableStack(IServiceCollection, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="connectionString">PostgreSQL connection string; when <see langword="null"/>, the value bound from configuration is used.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no PostgreSQL connection string is available from either source.</exception>
     public static IServiceCollection AddDurableStackPostgres(
         this IServiceCollection services,
         string? connectionString = null,
@@ -103,6 +151,16 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by SQLite. Binds the <c>DurableStack</c> configuration
+    /// section, takes the connection string from <c>DurableStack:Sqlite:ConnectionString</c>,
+    /// and otherwise behaves like <see cref="AddDurableStack(IServiceCollection, IConfiguration, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="configuration">Application configuration containing the <c>DurableStack</c> section.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no SQLite connection string is configured.</exception>
     public static IServiceCollection AddDurableStackSqlite(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -122,6 +180,18 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by SQL Server using an explicit connection string. If the service
+    /// collection already contains an <see cref="IConfiguration"/> instance, its <c>DurableStack</c>
+    /// section is bound first; the <paramref name="connectionString"/> argument takes precedence over
+    /// <c>DurableStack:SqlServer:ConnectionString</c>. Otherwise behaves like
+    /// <see cref="AddDurableStack(IServiceCollection, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="connectionString">SQL Server connection string; when <see langword="null"/>, the value bound from configuration is used.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no SQL Server connection string is available from either source.</exception>
     public static IServiceCollection AddDurableStackSqlServer(
         this IServiceCollection services,
         string? connectionString = null,
@@ -142,6 +212,18 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by SQLite using an explicit connection string. If the service
+    /// collection already contains an <see cref="IConfiguration"/> instance, its <c>DurableStack</c>
+    /// section is bound first; the <paramref name="connectionString"/> argument takes precedence over
+    /// <c>DurableStack:Sqlite:ConnectionString</c>. Otherwise behaves like
+    /// <see cref="AddDurableStack(IServiceCollection, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="connectionString">SQLite connection string; when <see langword="null"/>, the value bound from configuration is used.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no SQLite connection string is available from either source.</exception>
     public static IServiceCollection AddDurableStackSqlite(
         this IServiceCollection services,
         string? connectionString = null,
@@ -162,6 +244,18 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers DurableStack backed by MySQL using an explicit connection string. If the service
+    /// collection already contains an <see cref="IConfiguration"/> instance, its <c>DurableStack</c>
+    /// section is bound first; the <paramref name="connectionString"/> argument takes precedence over
+    /// <c>DurableStack:MySql:ConnectionString</c>. Otherwise behaves like
+    /// <see cref="AddDurableStack(IServiceCollection, Action{DurableStackOptions})"/>.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="connectionString">MySQL connection string; when <see langword="null"/>, the value bound from configuration is used.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when no MySQL connection string is available from either source.</exception>
     public static IServiceCollection AddDurableStackMySql(
         this IServiceCollection services,
         string? connectionString = null,
@@ -182,6 +276,28 @@ public static class ServiceCollectionExtensions
         return services.AddDurableStack(options);
     }
 
+    /// <summary>
+    /// Registers the complete DurableStack runtime: the job store for the configured storage provider,
+    /// the job registry, the enqueue/schedule client (<see cref="IDurableStackClient"/>), the job runner
+    /// with lease-heartbeat extension, recurring-job scheduling and sync, the schedule admin and run
+    /// query services, event publishing, and the <see cref="DurableStackHostedService"/> background worker.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="configuration">Application configuration; the <c>DurableStack</c> section is bound onto <see cref="DurableStackOptions"/>.</param>
+    /// <param name="configure">Optional callback applied after configuration binding to adjust options in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <remarks>
+    /// When no storage provider is configured, the non-durable in-memory store is used, which is suitable
+    /// only for development and testing. Invalid or missing numeric options are replaced with safe defaults.
+    /// When <c>JobRegistration:AutoDiscoverJobsFromAssembly</c> is enabled (the default), the entry assembly
+    /// is scanned for <see cref="Core.Abstractions.IDurableJob"/> implementations, honoring
+    /// <see cref="DurableJobAttribute"/> and <see cref="RecurringJobAttribute"/>. If <c>Eventing:TenantId</c>
+    /// and <c>Eventing:ClientSecret</c> are both set, the hosted observability API ingestion sink and its
+    /// sync service are registered automatically.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a database storage provider is selected without a connection string.
+    /// </exception>
     public static IServiceCollection AddDurableStack(
         this IServiceCollection services,
         IConfiguration configuration,
@@ -222,6 +338,20 @@ public static class ServiceCollectionExtensions
         });
     }
 
+    /// <summary>
+    /// Registers the complete DurableStack runtime configured in code. If the service collection already
+    /// contains an <see cref="IConfiguration"/> instance, its <c>DurableStack</c> section is bound first
+    /// and <paramref name="configure"/> is applied on top; otherwise defaults plus <paramref name="configure"/>
+    /// are used. With no storage provider configured, the non-durable in-memory store is used.
+    /// See <see cref="AddDurableStack(IServiceCollection, IConfiguration, Action{DurableStackOptions})"/>
+    /// for the full set of registered services.
+    /// </summary>
+    /// <param name="services">The service collection to add the registrations to.</param>
+    /// <param name="configure">Optional callback to configure <see cref="DurableStackOptions"/> in code.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a database storage provider is selected without a connection string.
+    /// </exception>
     public static IServiceCollection AddDurableStack(
         this IServiceCollection services,
         Action<DurableStackOptions>? configure = null)
@@ -472,17 +602,48 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Discovers and registers durable jobs from the entry assembly (or the calling assembly when no
+    /// entry assembly is available). Called automatically by <c>AddDurableStack</c> when
+    /// <c>JobRegistration:AutoDiscoverJobsFromAssembly</c> is enabled (the default).
+    /// See <see cref="AddDurableJobsFromAssembly(IServiceCollection, Assembly)"/> for discovery rules.
+    /// </summary>
+    /// <param name="services">The service collection to add the job registrations to.</param>
+    /// <returns>The same service collection for chaining.</returns>
     public static IServiceCollection AddDurableJobsFromAssembly(this IServiceCollection services)
     {
         var assembly = Assembly.GetEntryAssembly() ?? Assembly.GetCallingAssembly();
         return services.AddDurableJobsFromAssembly(assembly);
     }
 
+    /// <summary>
+    /// Discovers and registers durable jobs from the assembly containing <typeparamref name="TMarker"/>.
+    /// See <see cref="AddDurableJobsFromAssembly(IServiceCollection, Assembly)"/> for discovery rules.
+    /// </summary>
+    /// <typeparam name="TMarker">Any type from the assembly to scan.</typeparam>
+    /// <param name="services">The service collection to add the job registrations to.</param>
+    /// <returns>The same service collection for chaining.</returns>
     public static IServiceCollection AddDurableJobsFromAssembly<TMarker>(this IServiceCollection services)
     {
         return services.AddDurableJobsFromAssembly(typeof(TMarker).Assembly);
     }
 
+    /// <summary>
+    /// Scans the given assembly for public, concrete <see cref="Core.Abstractions.IDurableJob"/> and
+    /// <see cref="Core.Abstractions.IDurableJob{TArgs}"/> implementations and registers each as a durable job.
+    /// <see cref="DurableJobAttribute"/> supplies the job name and retry settings (the class name is used
+    /// when no name is given); <see cref="RecurringJobAttribute"/> adds a cron schedule whose expression
+    /// and IANA time zone are validated during the scan.
+    /// </summary>
+    /// <param name="services">The service collection to add the job registrations to.</param>
+    /// <param name="assembly">The assembly to scan for job types.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="assembly"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// Thrown when a discovered job duplicates an already-registered job name or type, or when a job
+    /// declares invalid attribute settings (non-positive max attempts, negative retry delay, missing
+    /// cron expression, or an unknown time zone).
+    /// </exception>
     public static IServiceCollection AddDurableJobsFromAssembly(this IServiceCollection services, Assembly assembly)
     {
         if (assembly is null)
@@ -523,6 +684,17 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers a durable job under the given name with settings built through a
+    /// <see cref="DurableJobOptions"/> callback (max attempts, cron schedule, retry behavior).
+    /// The job type is registered as a transient service so it can take constructor dependencies.
+    /// </summary>
+    /// <typeparam name="TJob">The job implementation type.</typeparam>
+    /// <param name="services">The service collection to add the job registration to.</param>
+    /// <param name="name">Unique job name used for enqueuing and stored run records (case-insensitive).</param>
+    /// <param name="configure">Callback that configures the job's execution and scheduling settings.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the job name or type is already registered.</exception>
     public static IServiceCollection AddDurableJob<TJob>(
         this IServiceCollection services,
         string name,
@@ -550,6 +722,16 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers an on-demand durable job under the given name. The job type is registered as a
+    /// transient service so it can take constructor dependencies.
+    /// </summary>
+    /// <typeparam name="TJob">The job implementation type.</typeparam>
+    /// <param name="services">The service collection to add the job registration to.</param>
+    /// <param name="name">Unique job name used for enqueuing and stored run records (case-insensitive).</param>
+    /// <param name="maxAttempts">Maximum number of execution attempts before a run is marked failed permanently. Defaults to 3.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the job name or type is already registered.</exception>
     public static IServiceCollection AddDurableJob<TJob>(
         this IServiceCollection services,
         string name,
@@ -569,6 +751,19 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers a recurring durable job that runs on the given cron schedule. Occurrences that would
+    /// overlap an active run are skipped. The job type is registered as a transient service so it can
+    /// take constructor dependencies.
+    /// </summary>
+    /// <typeparam name="TJob">The job implementation type.</typeparam>
+    /// <param name="services">The service collection to add the job registration to.</param>
+    /// <param name="name">Unique job name used for enqueuing and stored run records (case-insensitive).</param>
+    /// <param name="cronExpression">Cron expression that determines when new runs are materialized.</param>
+    /// <param name="timeZone">IANA time zone identifier in which the cron expression is evaluated. Defaults to "UTC".</param>
+    /// <param name="maxAttempts">Maximum number of execution attempts before a run is marked failed permanently. Defaults to 3.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the job name or type is already registered.</exception>
     public static IServiceCollection AddDurableJob<TJob>(
         this IServiceCollection services,
         string name,
@@ -593,6 +788,19 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers a durable job with a strongly typed payload under the given name, with settings built
+    /// through a <see cref="DurableJobOptions"/> callback. Enqueued arguments are serialized as JSON and
+    /// deserialized to <typeparamref name="TArgs"/> at execution time. The job type is registered as a
+    /// transient service so it can take constructor dependencies.
+    /// </summary>
+    /// <typeparam name="TJob">The job implementation type.</typeparam>
+    /// <typeparam name="TArgs">The payload type passed to the job on execution.</typeparam>
+    /// <param name="services">The service collection to add the job registration to.</param>
+    /// <param name="name">Unique job name used for enqueuing and stored run records (case-insensitive).</param>
+    /// <param name="configure">Callback that configures the job's execution and scheduling settings.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the job name or type is already registered.</exception>
     public static IServiceCollection AddDurableJob<TJob, TArgs>(
         this IServiceCollection services,
         string name,
@@ -621,6 +829,19 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers an on-demand durable job with a strongly typed payload under the given name.
+    /// Enqueued arguments are serialized as JSON and deserialized to <typeparamref name="TArgs"/>
+    /// at execution time. The job type is registered as a transient service so it can take
+    /// constructor dependencies.
+    /// </summary>
+    /// <typeparam name="TJob">The job implementation type.</typeparam>
+    /// <typeparam name="TArgs">The payload type passed to the job on execution.</typeparam>
+    /// <param name="services">The service collection to add the job registration to.</param>
+    /// <param name="name">Unique job name used for enqueuing and stored run records (case-insensitive).</param>
+    /// <param name="maxAttempts">Maximum number of execution attempts before a run is marked failed permanently. Defaults to 3.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the job name or type is already registered.</exception>
     public static IServiceCollection AddDurableJob<TJob, TArgs>(
         this IServiceCollection services,
         string name,
@@ -641,6 +862,20 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Registers a recurring durable job with a strongly typed payload that runs on the given cron
+    /// schedule. Occurrences that would overlap an active run are skipped. The job type is registered
+    /// as a transient service so it can take constructor dependencies.
+    /// </summary>
+    /// <typeparam name="TJob">The job implementation type.</typeparam>
+    /// <typeparam name="TArgs">The payload type passed to the job on execution.</typeparam>
+    /// <param name="services">The service collection to add the job registration to.</param>
+    /// <param name="name">Unique job name used for enqueuing and stored run records (case-insensitive).</param>
+    /// <param name="cronExpression">Cron expression that determines when new runs are materialized.</param>
+    /// <param name="timeZone">IANA time zone identifier in which the cron expression is evaluated. Defaults to "UTC".</param>
+    /// <param name="maxAttempts">Maximum number of execution attempts before a run is marked failed permanently. Defaults to 3.</param>
+    /// <returns>The same service collection for chaining.</returns>
+    /// <exception cref="InvalidOperationException">Thrown when the job name or type is already registered.</exception>
     public static IServiceCollection AddDurableJob<TJob, TArgs>(
         this IServiceCollection services,
         string name,
@@ -666,12 +901,28 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Adds <see cref="LoggingDurableStackEventSink"/> so worker events (job claimed, started,
+    /// succeeded, failed, retried, heartbeats) are written to the application's <c>ILogger</c>.
+    /// </summary>
+    /// <param name="services">The service collection to add the sink to.</param>
+    /// <returns>The same service collection for chaining.</returns>
     public static IServiceCollection UseDurableStackLoggingEventSink(this IServiceCollection services)
     {
         services.AddSingleton<IDurableStackEventSink, LoggingDurableStackEventSink>();
         return services;
     }
 
+    /// <summary>
+    /// Adds the hosted observability API ingestion pipeline: the buffering
+    /// <see cref="IngestionDurableStackEventSink"/>, the <see cref="IngestionEventSyncHostedService"/>
+    /// that batches and posts events, and its named HTTP client. Safe to call repeatedly; duplicate
+    /// registrations are skipped. Called automatically by <c>AddDurableStack</c> when
+    /// <c>Eventing:TenantId</c> and <c>Eventing:ClientSecret</c> are both configured — without those
+    /// credentials the sync service stays idle.
+    /// </summary>
+    /// <param name="services">The service collection to add the ingestion pipeline to.</param>
+    /// <returns>The same service collection for chaining.</returns>
     public static IServiceCollection UseDurableStackApiIngestionEventSink(this IServiceCollection services)
     {
         if (!services.Any(d => d.ServiceType == typeof(IDurableStackEventSink) && d.ImplementationType == typeof(IngestionDurableStackEventSink)))
@@ -688,6 +939,12 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Adds a custom event sink that receives all worker events alongside any other registered sinks.
+    /// </summary>
+    /// <typeparam name="TSink">The <see cref="IDurableStackEventSink"/> implementation to register as a singleton.</typeparam>
+    /// <param name="services">The service collection to add the sink to.</param>
+    /// <returns>The same service collection for chaining.</returns>
     public static IServiceCollection UseDurableStackEventSink<TSink>(this IServiceCollection services)
         where TSink : class, IDurableStackEventSink
     {

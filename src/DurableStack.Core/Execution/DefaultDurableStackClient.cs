@@ -6,17 +6,30 @@ using DurableStack.Core.Abstractions;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Enqueues and cancels job runs against the configured store. The job type is resolved to
+/// its registration by CLR type, payloads are serialized to JSON with
+/// <c>System.Text.Json</c>, and an <see cref="InvalidOperationException"/> is thrown when
+/// the type was never registered.
+/// </summary>
 public sealed class DefaultDurableStackClient : IDurableStackClient
 {
     private readonly IDurableJobStore _store;
     private readonly IDurableJobRegistry _registry;
 
+    /// <summary>
+    /// Creates a client that writes runs to <paramref name="store"/> and resolves job
+    /// types through <paramref name="registry"/>.
+    /// </summary>
+    /// <param name="store">Store that persists the enqueued runs.</param>
+    /// <param name="registry">Registry used to look up registrations by job type.</param>
     public DefaultDurableStackClient(IDurableJobStore store, IDurableJobRegistry registry)
     {
         _store = store;
         _registry = registry;
     }
 
+    /// <inheritdoc />
     public async Task<Guid> EnqueueAsync<TJob>(object? payload = null, CancellationToken cancellationToken = default)
     {
         var registration = _registry.FindByJobType(typeof(TJob))
@@ -33,6 +46,7 @@ public sealed class DefaultDurableStackClient : IDurableStackClient
             cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task<Guid> ScheduleAsync<TJob>(
         object? payload,
         DateTimeOffset runAtUtc,
@@ -52,6 +66,7 @@ public sealed class DefaultDurableStackClient : IDurableStackClient
             cancellationToken);
     }
 
+    /// <inheritdoc />
     public async Task<bool> CancelRunAsync(Guid runId, CancellationToken cancellationToken = default)
     {
         return await _store.CancelRunAsync(runId, cancellationToken);

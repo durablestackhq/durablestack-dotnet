@@ -7,6 +7,17 @@
       which overrides this with -p:Version=X.Y.Z. Do not hand-edit per project.
     -->
     <VersionPrefix>1.1.0</VersionPrefix>
+
+    <!-- Ship IntelliSense docs with the packages; CS1591 keeps public-API doc
+         coverage enforced (the test project opts out). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- Compiler warnings (including CS1591 missing-doc) fail the build so doc
+         coverage and code smells can't silently regress. NuGet advisory codes
+         (NU19xx) are deliberately kept as warnings so a future advisory against a
+         pinned dependency stays visible without hard-failing a release build. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>NU1900;NU1901;NU1902;NU1903;NU1904</WarningsNotAsErrors>
   </PropertyGroup>
 
 </Project>

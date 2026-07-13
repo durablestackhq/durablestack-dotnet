@@ -12,6 +12,15 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Hosting.Hosting;
 
+/// <summary>
+/// Background service that runs the DurableStack worker inside a .NET generic host. On startup it
+/// applies store migrations and syncs recurring job registrations, then runs two loops: a processing
+/// loop that claims and executes due runs each poll interval, and a heartbeat loop that publishes
+/// worker-heartbeat events. On shutdown it stops claiming new runs, waits up to
+/// <see cref="Core.Options.DurableStackOptions.ShutdownDrainTimeout"/> for in-flight runs to finish,
+/// then cancels any that remain (their leases expire and another worker reclaims them).
+/// Registered automatically by <c>AddDurableStack</c>.
+/// </summary>
 public sealed class DurableStackHostedService : BackgroundService
 {
     private readonly IDurableStackProcessor _processor;
@@ -23,6 +32,17 @@ public sealed class DurableStackHostedService : BackgroundService
     private readonly DurableStackEventFactory _eventFactory;
     private readonly ILogger<DurableStackHostedService> _logger;
 
+    /// <summary>
+    /// Creates the worker service from its collaborators. If <paramref name="processor"/> also
+    /// implements <see cref="IInFlightRunDrainer"/>, it is used to drain in-flight runs during shutdown.
+    /// </summary>
+    /// <param name="processor">Processor invoked each poll cycle to claim and execute due runs.</param>
+    /// <param name="storeMigrator">Applies job-store schema migrations before processing starts.</param>
+    /// <param name="recurringInitializer">Syncs code-defined recurring registrations into the store before processing starts.</param>
+    /// <param name="options">Worker options controlling poll interval, jitter, and shutdown drain timeout.</param>
+    /// <param name="eventSinks">Sinks that receive worker heartbeat events.</param>
+    /// <param name="eventFactory">Factory used to build the heartbeat events.</param>
+    /// <param name="logger">Logger for worker lifecycle and loop diagnostics.</param>
     public DurableStackHostedService(
         IDurableStackProcessor processor,
         IDurableStackStoreMigrator storeMigrator,
@@ -42,6 +62,13 @@ public sealed class DurableStackHostedService : BackgroundService
         _logger = logger;
     }
 
+    /// <summary>
+    /// Runs migrations and recurring-registration sync, then executes the poll and heartbeat loops
+    /// until <paramref name="stoppingToken"/> fires, and finally drains in-flight runs. Runs execute
+    /// on a separate token that outlives <paramref name="stoppingToken"/> so they get a drain window
+    /// instead of being cancelled mid-execution.
+    /// </summary>
+    /// <param name="stoppingToken">Signals that the host is shutting down.</param>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await _storeMigrator.MigrateAsync(stoppingToken);

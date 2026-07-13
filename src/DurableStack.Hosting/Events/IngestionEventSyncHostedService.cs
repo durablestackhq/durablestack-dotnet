@@ -17,6 +17,13 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Hosting.Events;
 
+/// <summary>
+/// Background service that drains buffered events from <see cref="IngestionDurableStackEventSink"/>
+/// and posts them in batches to the hosted DurableStack observability API. The service is a no-op
+/// unless <c>Eventing.TenantId</c> and <c>Eventing.ClientSecret</c> are configured. Non-loopback
+/// ingestion endpoints must use HTTPS because requests carry tenant credentials; transient failures
+/// are retried with exponential backoff, and worker heartbeats are collapsed into a single batch event.
+/// </summary>
 public sealed class IngestionEventSyncHostedService : BackgroundService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
@@ -34,6 +41,17 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
     private readonly Random _random = new();
     private int _sequence;
 
+    /// <summary>
+    /// Creates the service, locating the ingestion sink among the registered event sinks and
+    /// validating the configured ingestion base URL at startup.
+    /// </summary>
+    /// <param name="sinks">Registered event sinks; the first <see cref="IngestionDurableStackEventSink"/> found is drained by this service.</param>
+    /// <param name="options">Worker options supplying the <c>Eventing</c> ingestion settings.</param>
+    /// <param name="httpClientFactory">Factory used to create the HTTP client for ingestion requests.</param>
+    /// <param name="logger">Logger for sync-loop diagnostics.</param>
+    /// <exception cref="ArgumentException">
+    /// Thrown when <c>Eventing.IngestionApiBaseUrl</c> is not an absolute URL, or uses HTTP for a non-loopback host.
+    /// </exception>
     public IngestionEventSyncHostedService(
         IEnumerable<IDurableStackEventSink> sinks,
         DurableStackOptions options,
@@ -71,6 +89,12 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         return uri;
     }
 
+    /// <summary>
+    /// Runs the flush loop: reads buffered events up to the configured batch size, posts them to the
+    /// ingestion endpoint, then waits for the configured flush interval. Exits immediately when tenant
+    /// credentials or the ingestion sink are missing, and attempts one final flush on shutdown.
+    /// </summary>
+    /// <param name="stoppingToken">Signals that the host is shutting down.</param>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (string.IsNullOrWhiteSpace(_options.Eventing.TenantId) || string.IsNullOrWhiteSpace(_options.Eventing.ClientSecret))

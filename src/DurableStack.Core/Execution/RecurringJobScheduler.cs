@@ -8,6 +8,13 @@ using Microsoft.Extensions.Logging;
 
 namespace DurableStack.Core.Execution;
 
+/// <summary>
+/// Turns due cron schedules into pending job runs. Each poll fetches due recurring jobs from
+/// the store, computes the following occurrence (skipping missed slots when the catch-up
+/// policy is <see cref="RecurringCatchUpPolicy.SkipMissed"/>), and asks the store to
+/// materialize the run atomically. Errors are isolated per schedule: one bad cron expression
+/// or time zone is logged and skipped without stopping the other schedules.
+/// </summary>
 public sealed class RecurringJobScheduler : IRecurringJobScheduler
 {
     private readonly IDurableJobStore _store;
@@ -15,6 +22,14 @@ public sealed class RecurringJobScheduler : IRecurringJobScheduler
     private readonly DurableStackOptions _options;
     private readonly ILogger<RecurringJobScheduler>? _logger;
 
+    /// <summary>
+    /// Creates a scheduler that materializes runs from <paramref name="store"/> schedules
+    /// registered in <paramref name="registry"/>.
+    /// </summary>
+    /// <param name="store">Store holding recurring schedules and receiving materialized runs.</param>
+    /// <param name="registry">Registry used to resolve the registration for each due schedule.</param>
+    /// <param name="options">Configuration supplying the recurring catch-up policy.</param>
+    /// <param name="logger">Optional logger for per-schedule materialization failures.</param>
     public RecurringJobScheduler(
         IDurableJobStore store,
         IDurableJobRegistry registry,
@@ -27,6 +42,7 @@ public sealed class RecurringJobScheduler : IRecurringJobScheduler
         _logger = logger;
     }
 
+    /// <inheritdoc />
     public async Task<int> MaterializeDueRunsAsync(CancellationToken cancellationToken)
     {
         var nowUtc = DateTimeOffset.UtcNow;
