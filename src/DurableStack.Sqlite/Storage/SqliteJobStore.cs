@@ -27,7 +27,8 @@ public sealed class SqliteJobStore : IDurableJobStore
 
     // v1: initial schema. v2: drop the never-used job_locks table (SQLite's
     // single-writer transaction is used instead). v3: add runtime command receipts table.
-    private const int CurrentSchemaVersion = 3;
+    // v4: add upload marker and recorded timestamp for receipt upload dedupe.
+    private const int CurrentSchemaVersion = 4;
 
     private readonly string _connectionString;
     private readonly string _jobsTable;
@@ -1134,6 +1135,263 @@ public sealed class SqliteJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryLeaseRuntimeCommandReceiptAsync(
+        string commandId,
+        string workerName,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTimeOffset.UtcNow;
+        var leaseUntilUtc = nowUtc.Add(leaseDuration);
+
+        var sql = $"""
+            insert into {_runtimeCommandReceiptsTable} (
+                command_id,
+                status,
+                lease_owner,
+                lease_until_utc,
+                first_received_at_utc,
+                last_received_at_utc,
+                recorded_at_utc,
+                created_at_utc,
+                updated_at_utc,
+                uploaded_to_platform)
+            values (
+                @command_id,
+                'leased',
+                @worker_name,
+                @lease_until_utc,
+                @now_utc,
+                @now_utc,
+                @now_utc,
+                @now_utc,
+                @now_utc,
+                0)
+            on conflict(command_id) do update
+            set
+                status = 'leased',
+                lease_owner = excluded.lease_owner,
+                lease_until_utc = excluded.lease_until_utc,
+                last_received_at_utc = excluded.last_received_at_utc,
+                recorded_at_utc = excluded.recorded_at_utc,
+                started_at_utc = null,
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = excluded.updated_at_utc
+            where status not in ('succeeded', 'failed')
+              and (
+                lease_owner is null
+                or lease_until_utc is null
+                or lease_until_utc <= @now_utc
+                or lease_owner = @worker_name);
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqliteParameter("@command_id", commandId),
+            new SqliteParameter("@worker_name", workerName),
+            new SqliteParameter("@lease_until_utc", ToDbTimestamp(leaseUntilUtc)),
+            new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandAcknowledgedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'acknowledged',
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = @recorded_at_utc
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqliteParameter("@command_id", commandId),
+            new SqliteParameter("@worker_name", workerName),
+            new SqliteParameter("@recorded_at_utc", ToDbTimestamp(recordedAtUtc)));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandSucceededAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        Guid? runId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'succeeded',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = @run_id,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = @recorded_at_utc
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqliteParameter("@command_id", commandId),
+            new SqliteParameter("@worker_name", workerName),
+            new SqliteParameter("@recorded_at_utc", ToDbTimestamp(recordedAtUtc)),
+            new SqliteParameter("@completed_at_utc", ToDbTimestamp(completedAtUtc)),
+            new SqliteParameter("@run_id", (object?)runId?.ToString() ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandFailedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'failed',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = null,
+                error_code = @error_code,
+                error_message = @error_message,
+                uploaded_to_platform = 0,
+                updated_at_utc = @recorded_at_utc
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqliteParameter("@command_id", commandId),
+            new SqliteParameter("@worker_name", workerName),
+            new SqliteParameter("@recorded_at_utc", ToDbTimestamp(recordedAtUtc)),
+            new SqliteParameter("@completed_at_utc", ToDbTimestamp(completedAtUtc)),
+            new SqliteParameter("@error_code", (object?)errorCode ?? DBNull.Value),
+            new SqliteParameter("@error_message", (object?)errorMessage ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                command_id,
+                status,
+                error_code,
+                error_message,
+                run_id,
+                recorded_at_utc,
+                completed_at_utc
+            from {_runtimeCommandReceiptsTable}
+            where uploaded_to_platform = 0
+              and status in ('acknowledged', 'succeeded', 'failed')
+            order by recorded_at_utc asc
+            limit @take;
+            """;
+
+        var results = new List<RuntimeCommandReceiptRecord>();
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new SqliteCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var runIdRaw = reader.IsDBNull(reader.GetOrdinal("run_id"))
+                ? null
+                : reader.GetString(reader.GetOrdinal("run_id"));
+
+            results.Add(new RuntimeCommandReceiptRecord
+            {
+                CommandId = reader.GetString(reader.GetOrdinal("command_id")),
+                Status = reader.GetString(reader.GetOrdinal("status")),
+                ErrorCode = reader.IsDBNull(reader.GetOrdinal("error_code")) ? null : reader.GetString(reader.GetOrdinal("error_code")),
+                ErrorMessage = reader.IsDBNull(reader.GetOrdinal("error_message")) ? null : reader.GetString(reader.GetOrdinal("error_message")),
+                RunId = Guid.TryParse(runIdRaw, out var runId) ? runId : null,
+                RecordedAtUtc = AsUtcDateTimeOffset(reader, "recorded_at_utc"),
+                CompletedAtUtc = reader.IsDBNull(reader.GetOrdinal("completed_at_utc"))
+                    ? null
+                    : AsUtcDateTimeOffset(reader, "completed_at_utc"),
+            });
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandReceiptUploadedAsync(
+        string commandId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                uploaded_to_platform = 1,
+                updated_at_utc = @now_utc
+            where command_id = @command_id
+              and uploaded_to_platform = 0;
+            """;
+
+        var nowUtc = DateTimeOffset.UtcNow;
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqliteParameter("@command_id", commandId),
+            new SqliteParameter("@now_utc", ToDbTimestamp(nowUtc)));
+        return affected > 0;
+    }
+
     /// <summary>
     /// Creates or upgrades the schema to the current version, recording each applied
     /// version in the schema migrations table. SQLite's single-writer transaction
@@ -1192,6 +1450,13 @@ public sealed class SqliteJobStore : IDurableJobStore
             }
 
             await RecordSchemaVersionAsync(connection, transaction, 3, cancellationToken);
+        }
+
+        if (version < 4)
+        {
+            await EnsureRuntimeCommandReceiptUploadMarkerColumnsAsync(connection, transaction, cancellationToken);
+
+            await RecordSchemaVersionAsync(connection, transaction, 4, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -1422,6 +1687,30 @@ public sealed class SqliteJobStore : IDurableJobStore
         return sb.ToString();
     }
 
+    private async Task EnsureRuntimeCommandReceiptUploadMarkerColumnsAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        CancellationToken cancellationToken)
+    {
+        if (!await HasColumnAsync(connection, transaction, _runtimeCommandReceiptsTable, "recorded_at_utc", cancellationToken))
+        {
+            var addRecordedSql = $"alter table {_runtimeCommandReceiptsTable} add column recorded_at_utc text not null default '0001-01-01T00:00:00.0000000+00:00';";
+            await using var addRecorded = new SqliteCommand(addRecordedSql, connection, transaction);
+            await addRecorded.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!await HasColumnAsync(connection, transaction, _runtimeCommandReceiptsTable, "uploaded_to_platform", cancellationToken))
+        {
+            var addUploadedSql = $"alter table {_runtimeCommandReceiptsTable} add column uploaded_to_platform integer not null default 0;";
+            await using var addUploaded = new SqliteCommand(addUploadedSql, connection, transaction);
+            await addUploaded.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        var createIndexSql = $"create index if not exists {QuoteIndex($"ix_{Unquote(_runtimeCommandReceiptsTable)}_uploaded")} on {_runtimeCommandReceiptsTable} (uploaded_to_platform, status, recorded_at_utc);";
+        await using var createIndex = new SqliteCommand(createIndexSql, connection, transaction);
+        await createIndex.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task EnsureAllowConcurrentRunsColumnAsync(
         SqliteConnection connection,
         SqliteTransaction transaction,
@@ -1456,9 +1745,14 @@ public sealed class SqliteJobStore : IDurableJobStore
         }
     }
 
-    private async Task<bool> HasColumnAsync(SqliteConnection connection, SqliteTransaction transaction, string columnName, CancellationToken cancellationToken)
+    private async Task<bool> HasColumnAsync(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string tableIdentifier,
+        string columnName,
+        CancellationToken cancellationToken)
     {
-        var pragmaSql = $"PRAGMA table_info({_jobsTable});";
+        var pragmaSql = $"PRAGMA table_info({tableIdentifier});";
         await using var pragma = new SqliteCommand(pragmaSql, connection, transaction);
         await using var reader = await pragma.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
@@ -1470,6 +1764,11 @@ public sealed class SqliteJobStore : IDurableJobStore
         }
 
         return false;
+    }
+
+    private Task<bool> HasColumnAsync(SqliteConnection connection, SqliteTransaction transaction, string columnName, CancellationToken cancellationToken)
+    {
+        return HasColumnAsync(connection, transaction, _jobsTable, columnName, cancellationToken);
     }
 
     private static string ToDbTimestamp(DateTimeOffset value)

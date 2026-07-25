@@ -24,8 +24,9 @@ public sealed class PostgresJobStore : IDurableJobStore
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
     // v1: initial schema. v2: drop the never-used job_locks table (native advisory
-    // locks are used instead). v3: add runtime command receipts table.
-    private const int CurrentSchemaVersion = 3;
+    // locks are used instead). v3: add runtime command receipts table. v4: add
+    // uploaded_to_platform marker for receipt upload dedupe.
+    private const int CurrentSchemaVersion = 4;
 
     private readonly string _connectionString;
     private readonly string _jobsTable;
@@ -1050,6 +1051,257 @@ public sealed class PostgresJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryLeaseRuntimeCommandReceiptAsync(
+        string commandId,
+        string workerName,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            insert into {_runtimeCommandReceiptsTable} (
+                command_id,
+                status,
+                lease_owner,
+                lease_until_utc,
+                first_received_at_utc,
+                last_received_at_utc,
+                recorded_at_utc,
+                created_at_utc,
+                updated_at_utc,
+                uploaded_to_platform)
+            values (
+                @command_id,
+                'leased',
+                @worker_name,
+                now() + @lease_duration,
+                now(),
+                now(),
+                now(),
+                now(),
+                now(),
+                false)
+            on conflict (command_id) do update
+            set
+                status = 'leased',
+                lease_owner = excluded.lease_owner,
+                lease_until_utc = now() + @lease_duration,
+                last_received_at_utc = now(),
+                recorded_at_utc = now(),
+                started_at_utc = null,
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                updated_at_utc = now(),
+                uploaded_to_platform = false
+            where {_runtimeCommandReceiptsTable}.status not in ('succeeded', 'failed')
+              and (
+                {_runtimeCommandReceiptsTable}.lease_owner is null
+                or {_runtimeCommandReceiptsTable}.lease_until_utc is null
+                or {_runtimeCommandReceiptsTable}.lease_until_utc <= now()
+                or {_runtimeCommandReceiptsTable}.lease_owner = excluded.lease_owner);
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new NpgsqlParameter("command_id", commandId),
+            new NpgsqlParameter("worker_name", workerName),
+            new NpgsqlParameter("lease_duration", leaseDuration));
+
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandAcknowledgedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'acknowledged',
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                updated_at_utc = now(),
+                uploaded_to_platform = false
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new NpgsqlParameter("command_id", commandId),
+            new NpgsqlParameter("worker_name", workerName),
+            new NpgsqlParameter("recorded_at_utc", recordedAtUtc.UtcDateTime));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandSucceededAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        Guid? runId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'succeeded',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = @run_id,
+                error_code = null,
+                error_message = null,
+                updated_at_utc = now(),
+                uploaded_to_platform = false
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new NpgsqlParameter("command_id", commandId),
+            new NpgsqlParameter("worker_name", workerName),
+            new NpgsqlParameter("recorded_at_utc", recordedAtUtc.UtcDateTime),
+            new NpgsqlParameter("completed_at_utc", completedAtUtc.UtcDateTime),
+            new NpgsqlParameter("run_id", (object?)runId ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandFailedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'failed',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = null,
+                error_code = @error_code,
+                error_message = @error_message,
+                updated_at_utc = now(),
+                uploaded_to_platform = false
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new NpgsqlParameter("command_id", commandId),
+            new NpgsqlParameter("worker_name", workerName),
+            new NpgsqlParameter("recorded_at_utc", recordedAtUtc.UtcDateTime),
+            new NpgsqlParameter("completed_at_utc", completedAtUtc.UtcDateTime),
+            new NpgsqlParameter("error_code", (object?)errorCode ?? DBNull.Value),
+            new NpgsqlParameter("error_message", (object?)errorMessage ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                command_id,
+                status,
+                error_code,
+                error_message,
+                run_id,
+                recorded_at_utc,
+                completed_at_utc
+            from {_runtimeCommandReceiptsTable}
+            where uploaded_to_platform = false
+              and status in ('acknowledged', 'succeeded', 'failed')
+            order by recorded_at_utc asc
+            limit @take;
+            """;
+
+        var results = new List<RuntimeCommandReceiptRecord>();
+
+        await using var connection = new NpgsqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("take", Math.Max(1, take));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var runIdOrdinal = reader.GetOrdinal("run_id");
+            var completedAtOrdinal = reader.GetOrdinal("completed_at_utc");
+
+            results.Add(new RuntimeCommandReceiptRecord
+            {
+                CommandId = reader.GetString(reader.GetOrdinal("command_id")),
+                Status = reader.GetString(reader.GetOrdinal("status")),
+                ErrorCode = reader.IsDBNull(reader.GetOrdinal("error_code")) ? null : reader.GetString(reader.GetOrdinal("error_code")),
+                ErrorMessage = reader.IsDBNull(reader.GetOrdinal("error_message")) ? null : reader.GetString(reader.GetOrdinal("error_message")),
+                RunId = reader.IsDBNull(runIdOrdinal) ? null : reader.GetGuid(runIdOrdinal),
+                RecordedAtUtc = AsUtcDateTimeOffset(reader, "recorded_at_utc"),
+                CompletedAtUtc = reader.IsDBNull(completedAtOrdinal)
+                    ? null
+                    : AsUtcDateTimeOffset(reader, "completed_at_utc"),
+            });
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandReceiptUploadedAsync(
+        string commandId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                uploaded_to_platform = true,
+                updated_at_utc = now()
+            where command_id = @command_id
+              and uploaded_to_platform = false;
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new NpgsqlParameter("command_id", commandId));
+        return affected > 0;
+    }
+
     private async Task<int> ExecuteNonQueryAsync(string sql, CancellationToken cancellationToken, params NpgsqlParameter[] parameters)
     {
         await using var connection = new NpgsqlConnection(_connectionString);
@@ -1208,6 +1460,11 @@ public sealed class PostgresJobStore : IDurableJobStore
             await ExecuteMigrationStepAsync(connection, transaction, BuildRuntimeCommandReceiptsMigrationSql(), 3, cancellationToken);
         }
 
+        if (version < 4)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildRuntimeCommandReceiptUploadMarkerMigrationSql(), 4, cancellationToken);
+        }
+
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -1358,6 +1615,8 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine("    run_id uuid null,");
         sb.AppendLine("    error_code text null,");
         sb.AppendLine("    error_message text null,");
+        sb.AppendLine("    recorded_at_utc timestamptz not null default now(),");
+        sb.AppendLine("    uploaded_to_platform boolean not null default false,");
         sb.AppendLine("    created_at_utc timestamptz not null default now(),");
         sb.AppendLine("    updated_at_utc timestamptz not null default now()");
         sb.AppendLine(");");
@@ -1365,6 +1624,15 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists ix_{_runtimeCommandReceiptsTable}_lease on {_runtimeCommandReceiptsTable} (lease_until_utc);");
         sb.AppendLine($"create index if not exists ix_{_runtimeCommandReceiptsTable}_status on {_runtimeCommandReceiptsTable} (status);");
 
+        return sb.ToString();
+    }
+
+    private string BuildRuntimeCommandReceiptUploadMarkerMigrationSql()
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"alter table {_runtimeCommandReceiptsTable} add column if not exists recorded_at_utc timestamptz not null default now();");
+        sb.AppendLine($"alter table {_runtimeCommandReceiptsTable} add column if not exists uploaded_to_platform boolean not null default false;");
+        sb.AppendLine($"create index if not exists ix_{_runtimeCommandReceiptsTable}_uploaded on {_runtimeCommandReceiptsTable} (uploaded_to_platform, status, recorded_at_utc);");
         return sb.ToString();
     }
 }

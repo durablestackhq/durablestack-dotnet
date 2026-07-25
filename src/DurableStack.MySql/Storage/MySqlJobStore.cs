@@ -25,8 +25,9 @@ public sealed class MySqlJobStore : IDurableJobStore
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
     // v1: initial schema. v2: drop the never-used job_locks table (GET_LOCK is used
-    // instead). v3: add runtime command receipts table.
-    private const int CurrentSchemaVersion = 3;
+    // instead). v3: add runtime command receipts table. v4: add upload marker and
+    // recorded timestamp for receipt upload dedupe.
+    private const int CurrentSchemaVersion = 4;
 
     private readonly string _connectionString;
     private readonly string _jobsTableName;
@@ -1121,6 +1122,329 @@ public sealed class MySqlJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryLeaseRuntimeCommandReceiptAsync(
+        string commandId,
+        string workerName,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken)
+    {
+        var nowUtc = DateTimeOffset.UtcNow;
+        var leaseUntilUtc = nowUtc.Add(leaseDuration);
+
+        var upsertSql = $"""
+            insert into {_runtimeCommandReceiptsTable} (
+                command_id,
+                status,
+                lease_owner,
+                lease_until_utc,
+                first_received_at_utc,
+                last_received_at_utc,
+                recorded_at_utc,
+                created_at_utc,
+                updated_at_utc,
+                uploaded_to_platform)
+            values (
+                @command_id,
+                'leased',
+                @worker_name,
+                @lease_until_utc,
+                @now_utc,
+                @now_utc,
+                @now_utc,
+                @now_utc,
+                @now_utc,
+                0)
+            on duplicate key update
+                status = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    status,
+                    'leased'),
+                lease_owner = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    lease_owner,
+                    @worker_name),
+                lease_until_utc = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    lease_until_utc,
+                    @lease_until_utc),
+                last_received_at_utc = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    last_received_at_utc,
+                    @now_utc),
+                recorded_at_utc = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    recorded_at_utc,
+                    @now_utc),
+                started_at_utc = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    started_at_utc,
+                    null),
+                completed_at_utc = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    completed_at_utc,
+                    null),
+                run_id = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    run_id,
+                    null),
+                error_code = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    error_code,
+                    null),
+                error_message = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    error_message,
+                    null),
+                uploaded_to_platform = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    uploaded_to_platform,
+                    0),
+                updated_at_utc = if(
+                    status in ('succeeded', 'failed')
+                    or (lease_owner is not null and lease_until_utc is not null and lease_until_utc > @now_utc and lease_owner <> @worker_name),
+                    updated_at_utc,
+                    @now_utc);
+            """;
+
+        var checkSql = $"""
+            select status, lease_owner, lease_until_utc
+            from {_runtimeCommandReceiptsTable}
+            where command_id = @command_id;
+            """;
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using (var upsert = new MySqlCommand(upsertSql, connection))
+        {
+            upsert.Parameters.AddWithValue("@command_id", commandId);
+            upsert.Parameters.AddWithValue("@worker_name", workerName);
+            upsert.Parameters.AddWithValue("@now_utc", nowUtc.UtcDateTime);
+            upsert.Parameters.AddWithValue("@lease_until_utc", leaseUntilUtc.UtcDateTime);
+            await upsert.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using var check = new MySqlCommand(checkSql, connection);
+        check.Parameters.AddWithValue("@command_id", commandId);
+        await using var reader = await check.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken))
+        {
+            return false;
+        }
+
+        var status = reader.GetString(0);
+        var leaseOwner = reader.IsDBNull(1) ? null : reader.GetString(1);
+        var leaseUntil = reader.IsDBNull(2)
+            ? (DateTime?)null
+            : DateTime.SpecifyKind(reader.GetDateTime(2), DateTimeKind.Utc);
+
+        return string.Equals(status, "leased", StringComparison.Ordinal)
+            && string.Equals(leaseOwner, workerName, StringComparison.Ordinal)
+            && leaseUntil.HasValue
+            && leaseUntil.Value > nowUtc.UtcDateTime;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandAcknowledgedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'acknowledged',
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = UTC_TIMESTAMP(6)
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new MySqlParameter("@command_id", commandId),
+            new MySqlParameter("@worker_name", workerName),
+            new MySqlParameter("@recorded_at_utc", recordedAtUtc.UtcDateTime));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandSucceededAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        Guid? runId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'succeeded',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = @run_id,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = UTC_TIMESTAMP(6)
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new MySqlParameter("@command_id", commandId),
+            new MySqlParameter("@worker_name", workerName),
+            new MySqlParameter("@recorded_at_utc", recordedAtUtc.UtcDateTime),
+            new MySqlParameter("@completed_at_utc", completedAtUtc.UtcDateTime),
+            new MySqlParameter("@run_id", (object?)runId?.ToString() ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandFailedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = 'failed',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = coalesce(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = null,
+                error_code = @error_code,
+                error_message = @error_message,
+                uploaded_to_platform = 0,
+                updated_at_utc = UTC_TIMESTAMP(6)
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in ('leased', 'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new MySqlParameter("@command_id", commandId),
+            new MySqlParameter("@worker_name", workerName),
+            new MySqlParameter("@recorded_at_utc", recordedAtUtc.UtcDateTime),
+            new MySqlParameter("@completed_at_utc", completedAtUtc.UtcDateTime),
+            new MySqlParameter("@error_code", (object?)errorCode ?? DBNull.Value),
+            new MySqlParameter("@error_message", (object?)errorMessage ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select
+                command_id,
+                status,
+                error_code,
+                error_message,
+                run_id,
+                recorded_at_utc,
+                completed_at_utc
+            from {_runtimeCommandReceiptsTable}
+            where uploaded_to_platform = 0
+              and status in ('acknowledged', 'succeeded', 'failed')
+            order by recorded_at_utc asc
+            limit @take;
+            """;
+
+        var results = new List<RuntimeCommandReceiptRecord>();
+
+        await using var connection = new MySqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var runIdOrdinal = reader.GetOrdinal("run_id");
+            var completedAtOrdinal = reader.GetOrdinal("completed_at_utc");
+
+            results.Add(new RuntimeCommandReceiptRecord
+            {
+                CommandId = reader.GetString(reader.GetOrdinal("command_id")),
+                Status = reader.GetString(reader.GetOrdinal("status")),
+                ErrorCode = reader.IsDBNull(reader.GetOrdinal("error_code")) ? null : reader.GetString(reader.GetOrdinal("error_code")),
+                ErrorMessage = reader.IsDBNull(reader.GetOrdinal("error_message")) ? null : reader.GetString(reader.GetOrdinal("error_message")),
+                RunId = reader.IsDBNull(runIdOrdinal) ? null : reader.GetGuid(runIdOrdinal),
+                RecordedAtUtc = AsUtcDateTimeOffset(reader, "recorded_at_utc"),
+                CompletedAtUtc = reader.IsDBNull(completedAtOrdinal)
+                    ? null
+                    : AsUtcDateTimeOffset(reader, "completed_at_utc"),
+            });
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandReceiptUploadedAsync(
+        string commandId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                uploaded_to_platform = 1,
+                updated_at_utc = UTC_TIMESTAMP(6)
+            where command_id = @command_id
+              and uploaded_to_platform = 0;
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new MySqlParameter("@command_id", commandId));
+        return affected > 0;
+    }
+
     /// <summary>
     /// Creates or upgrades the schema to the current version, recording each applied
     /// version in the schema migrations table. Concurrent workers are serialized with
@@ -1176,6 +1500,11 @@ public sealed class MySqlJobStore : IDurableJobStore
             if (version < 3)
             {
                 await ExecuteMigrationStepAsync(connection, BuildRuntimeCommandReceiptsMigrationStatements(), 3, cancellationToken);
+            }
+
+            if (version < 4)
+            {
+                await ExecuteMigrationStepAsync(connection, BuildRuntimeCommandReceiptUploadMarkerMigrationStatements(), 4, cancellationToken);
             }
         }
         finally
@@ -1429,7 +1758,17 @@ public sealed class MySqlJobStore : IDurableJobStore
             """,
             $"create index {QuoteIndex($"ix_{_runtimeCommandReceiptsTableName}_lease")} on {_runtimeCommandReceiptsTable} (lease_until_utc);",
             $"create index {QuoteIndex($"ix_{_runtimeCommandReceiptsTableName}_status")} on {_runtimeCommandReceiptsTable} (status);",
+            $"alter table {_runtimeCommandReceiptsTable} add column recorded_at_utc datetime(6) not null default (utc_timestamp(6));",
+            $"alter table {_runtimeCommandReceiptsTable} add column uploaded_to_platform tinyint(1) not null default 0;",
         };
+    }
+
+    private IReadOnlyList<string> BuildRuntimeCommandReceiptUploadMarkerMigrationStatements()
+    {
+        return
+        [
+            $"create index {QuoteIndex($"ix_{_runtimeCommandReceiptsTableName}_uploaded")} on {_runtimeCommandReceiptsTable} (uploaded_to_platform, status, recorded_at_utc);",
+        ];
     }
 
     private static string Quote(string identifier)
