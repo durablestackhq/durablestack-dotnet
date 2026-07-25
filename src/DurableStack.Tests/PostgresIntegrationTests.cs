@@ -82,6 +82,7 @@ public sealed class PostgresIntegrationTests
         Assert.True(await TableExistsAsync(connectionString, $"{prefix.ToLowerInvariant()}durable_stack_jobs"));
         Assert.True(await TableExistsAsync(connectionString, $"{prefix.ToLowerInvariant()}durable_stack_job_runs"));
         Assert.True(await TableExistsAsync(connectionString, $"{prefix.ToLowerInvariant()}durable_stack_schema_migrations"));
+        Assert.True(await TableExistsAsync(connectionString, $"{prefix.ToLowerInvariant()}durable_stack_runtime_command_receipts"));
         Assert.False(await TableExistsAsync(connectionString, $"{prefix.ToLowerInvariant()}durable_stack_job_locks"));
     }
 
@@ -125,7 +126,7 @@ public sealed class PostgresIntegrationTests
         await connection.OpenAsync();
         await using var command = new NpgsqlCommand($"select count(*) from {prefix}durable_stack_schema_migrations", connection);
         var versions = Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Equal(2, versions);
+        Assert.Equal(3, versions);
     }
 
     [SkippableFact]

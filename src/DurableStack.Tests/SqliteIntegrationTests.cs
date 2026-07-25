@@ -65,6 +65,7 @@ public sealed class SqliteIntegrationTests
         Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_jobs"));
         Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_job_runs"));
         Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_schema_migrations"));
+        Assert.True(await fixture.TableExistsAsync($"{prefix}durable_stack_runtime_command_receipts"));
         Assert.False(await fixture.TableExistsAsync($"{prefix}durable_stack_job_locks"));
     }
 
@@ -108,7 +109,7 @@ public sealed class SqliteIntegrationTests
                 await connection.OpenAsync();
                 await using var command = new SqliteCommand("select count(*) from durable_stack_schema_migrations", connection);
                 var versions = Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
-                Assert.Equal(2, versions);
+                Assert.Equal(3, versions);
             }
         }
         finally

@@ -28,14 +28,16 @@ public sealed class SqlServerJobStore : IDurableJobStore
     private readonly string _jobsTableName;
     private readonly string _runsTableName;
     private readonly string _locksTableName;
+    private readonly string _runtimeCommandReceiptsTableName;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
     private readonly string _migrationsTable;
+    private readonly string _runtimeCommandReceiptsTable;
 
     // v1: initial schema. v2: drop the never-used job_locks table (sp_getapplock is
-    // used instead).
-    private const int CurrentSchemaVersion = 2;
+    // used instead). v3: add runtime command receipts table.
+    private const int CurrentSchemaVersion = 3;
 
     /// <summary>
     /// Initializes the store from the configured options. Requires a SQL Server connection
@@ -56,10 +58,12 @@ public sealed class SqlServerJobStore : IDurableJobStore
         _jobsTableName = SqlServerTableNameResolver.Jobs(options);
         _runsTableName = SqlServerTableNameResolver.Runs(options);
         _locksTableName = SqlServerTableNameResolver.Locks(options);
+        _runtimeCommandReceiptsTableName = SqlServerTableNameResolver.RuntimeCommandReceipts(options);
         _jobsTable = Qualify(_jobsTableName);
         _runsTable = Qualify(_runsTableName);
         _locksTable = Qualify(_locksTableName);
         _migrationsTable = Qualify(SqlServerTableNameResolver.Migrations(options));
+        _runtimeCommandReceiptsTable = Qualify(_runtimeCommandReceiptsTableName);
     }
 
     /// <inheritdoc />
@@ -1098,6 +1102,11 @@ public sealed class SqlServerJobStore : IDurableJobStore
             await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
         }
 
+        if (version < 3)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildRuntimeCommandReceiptsMigrationSql(), 3, cancellationToken);
+        }
+
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -1410,6 +1419,44 @@ public sealed class SqlServerJobStore : IDurableJobStore
             if not exists (select 1 from sys.indexes where name = N'{runsRecurringUniqueIndexName}' and object_id = object_id(N'{runsObject}'))
             begin
                 create unique index [{runsRecurringUniqueIndexName}] on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;
+            end;
+            """;
+    }
+
+    private string BuildRuntimeCommandReceiptsMigrationSql()
+    {
+        var receiptsObject = TableObjectName(_runtimeCommandReceiptsTableName);
+        var leaseIndexName = $"ix_{_runtimeCommandReceiptsTableName}_lease";
+        var statusIndexName = $"ix_{_runtimeCommandReceiptsTableName}_status";
+
+        return $"""
+            if object_id(N'{receiptsObject}', N'U') is null
+            begin
+                create table {_runtimeCommandReceiptsTable} (
+                    command_id nvarchar(200) not null primary key,
+                    status nvarchar(32) not null,
+                    lease_owner nvarchar(256) null,
+                    lease_until_utc datetime2(7) null,
+                    first_received_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_first_received_at_utc default SYSUTCDATETIME(),
+                    last_received_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_last_received_at_utc default SYSUTCDATETIME(),
+                    started_at_utc datetime2(7) null,
+                    completed_at_utc datetime2(7) null,
+                    run_id uniqueidentifier null,
+                    error_code nvarchar(128) null,
+                    error_message nvarchar(2000) null,
+                    created_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_created_at_utc default SYSUTCDATETIME(),
+                    updated_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_updated_at_utc default SYSUTCDATETIME()
+                );
+            end;
+
+            if not exists (select 1 from sys.indexes where name = N'{leaseIndexName}' and object_id = object_id(N'{receiptsObject}'))
+            begin
+                create index [{leaseIndexName}] on {_runtimeCommandReceiptsTable} (lease_until_utc);
+            end;
+
+            if not exists (select 1 from sys.indexes where name = N'{statusIndexName}' and object_id = object_id(N'{receiptsObject}'))
+            begin
+                create index [{statusIndexName}] on {_runtimeCommandReceiptsTable} (status);
             end;
             """;
     }

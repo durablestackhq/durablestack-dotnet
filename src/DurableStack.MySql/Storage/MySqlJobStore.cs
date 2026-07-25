@@ -25,8 +25,8 @@ public sealed class MySqlJobStore : IDurableJobStore
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
     // v1: initial schema. v2: drop the never-used job_locks table (GET_LOCK is used
-    // instead).
-    private const int CurrentSchemaVersion = 2;
+    // instead). v3: add runtime command receipts table.
+    private const int CurrentSchemaVersion = 3;
 
     private readonly string _connectionString;
     private readonly string _jobsTableName;
@@ -36,6 +36,8 @@ public sealed class MySqlJobStore : IDurableJobStore
     private readonly string _runsTable;
     private readonly string _locksTable;
     private readonly string _migrationsTable;
+    private readonly string _runtimeCommandReceiptsTableName;
+    private readonly string _runtimeCommandReceiptsTable;
 
     /// <summary>
     /// Initializes the store from the configured options. Requires a MySQL connection
@@ -54,10 +56,12 @@ public sealed class MySqlJobStore : IDurableJobStore
         _jobsTableName = MySqlTableNameResolver.Jobs(options);
         _runsTableName = MySqlTableNameResolver.Runs(options);
         _locksTableName = MySqlTableNameResolver.Locks(options);
+        _runtimeCommandReceiptsTableName = MySqlTableNameResolver.RuntimeCommandReceipts(options);
         _jobsTable = Quote(_jobsTableName);
         _runsTable = Quote(_runsTableName);
         _locksTable = Quote(_locksTableName);
         _migrationsTable = Quote(MySqlTableNameResolver.Migrations(options));
+        _runtimeCommandReceiptsTable = Quote(_runtimeCommandReceiptsTableName);
     }
 
     /// <inheritdoc />
@@ -1168,6 +1172,11 @@ public sealed class MySqlJobStore : IDurableJobStore
             {
                 await ExecuteMigrationStepAsync(connection, new[] { $"drop table if exists {_locksTable};" }, 2, cancellationToken);
             }
+
+            if (version < 3)
+            {
+                await ExecuteMigrationStepAsync(connection, BuildRuntimeCommandReceiptsMigrationStatements(), 3, cancellationToken);
+            }
         }
         finally
         {
@@ -1394,6 +1403,32 @@ public sealed class MySqlJobStore : IDurableJobStore
             $"create index {QuoteIndex($"ix_{_runsTableName}_job_name")} on {_runsTable} (job_name);",
             $"create index {QuoteIndex($"ix_{_runsTableName}_completed")} on {_runsTable} (status, completed_at_utc);",
             $"create unique index {QuoteIndex($"ix_{_runsTableName}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc);",
+        };
+    }
+
+    private IReadOnlyList<string> BuildRuntimeCommandReceiptsMigrationStatements()
+    {
+        return new[]
+        {
+            $"""
+            create table if not exists {_runtimeCommandReceiptsTable} (
+                command_id varchar(200) primary key,
+                status varchar(32) not null,
+                lease_owner varchar(256) null,
+                lease_until_utc datetime(6) null,
+                first_received_at_utc datetime(6) not null default (utc_timestamp(6)),
+                last_received_at_utc datetime(6) not null default (utc_timestamp(6)),
+                started_at_utc datetime(6) null,
+                completed_at_utc datetime(6) null,
+                run_id char(36) null,
+                error_code varchar(128) null,
+                error_message varchar(2000) null,
+                created_at_utc datetime(6) not null default (utc_timestamp(6)),
+                updated_at_utc datetime(6) not null default (utc_timestamp(6))
+            );
+            """,
+            $"create index {QuoteIndex($"ix_{_runtimeCommandReceiptsTableName}_lease")} on {_runtimeCommandReceiptsTable} (lease_until_utc);",
+            $"create index {QuoteIndex($"ix_{_runtimeCommandReceiptsTableName}_status")} on {_runtimeCommandReceiptsTable} (status);",
         };
     }
 

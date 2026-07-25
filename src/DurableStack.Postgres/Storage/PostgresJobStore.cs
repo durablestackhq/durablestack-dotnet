@@ -24,14 +24,15 @@ public sealed class PostgresJobStore : IDurableJobStore
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
     // v1: initial schema. v2: drop the never-used job_locks table (native advisory
-    // locks are used instead).
-    private const int CurrentSchemaVersion = 2;
+    // locks are used instead). v3: add runtime command receipts table.
+    private const int CurrentSchemaVersion = 3;
 
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
     private readonly string _migrationsTable;
+    private readonly string _runtimeCommandReceiptsTable;
 
     /// <summary>
     /// Initializes the store from the configured options. Requires a PostgreSQL connection
@@ -52,6 +53,7 @@ public sealed class PostgresJobStore : IDurableJobStore
         _runsTable = PostgresTableNameResolver.Runs(options);
         _locksTable = PostgresTableNameResolver.Locks(options);
         _migrationsTable = PostgresTableNameResolver.Migrations(options);
+        _runtimeCommandReceiptsTable = PostgresTableNameResolver.RuntimeCommandReceipts(options);
     }
 
     /// <inheritdoc />
@@ -1201,6 +1203,11 @@ public sealed class PostgresJobStore : IDurableJobStore
             await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
         }
 
+        if (version < 3)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildRuntimeCommandReceiptsMigrationSql(), 3, cancellationToken);
+        }
+
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -1331,6 +1338,32 @@ public sealed class PostgresJobStore : IDurableJobStore
         sb.AppendLine($"alter table {_jobsTable} drop column if exists retry_backoff_seconds;");
         sb.AppendLine($"alter table {_runsTable} add column if not exists schedule_slot_utc timestamptz null;");
         sb.AppendLine($"create unique index if not exists ix_{_runsTable}_recurring_slot_unique on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
+
+        return sb.ToString();
+    }
+
+    private string BuildRuntimeCommandReceiptsMigrationSql()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine($"create table if not exists {_runtimeCommandReceiptsTable} (");
+        sb.AppendLine("    command_id text primary key,");
+        sb.AppendLine("    status text not null,");
+        sb.AppendLine("    lease_owner text null,");
+        sb.AppendLine("    lease_until_utc timestamptz null,");
+        sb.AppendLine("    first_received_at_utc timestamptz not null default now(),");
+        sb.AppendLine("    last_received_at_utc timestamptz not null default now(),");
+        sb.AppendLine("    started_at_utc timestamptz null,");
+        sb.AppendLine("    completed_at_utc timestamptz null,");
+        sb.AppendLine("    run_id uuid null,");
+        sb.AppendLine("    error_code text null,");
+        sb.AppendLine("    error_message text null,");
+        sb.AppendLine("    created_at_utc timestamptz not null default now(),");
+        sb.AppendLine("    updated_at_utc timestamptz not null default now()");
+        sb.AppendLine(");");
+
+        sb.AppendLine($"create index if not exists ix_{_runtimeCommandReceiptsTable}_lease on {_runtimeCommandReceiptsTable} (lease_until_utc);");
+        sb.AppendLine($"create index if not exists ix_{_runtimeCommandReceiptsTable}_status on {_runtimeCommandReceiptsTable} (status);");
 
         return sb.ToString();
     }

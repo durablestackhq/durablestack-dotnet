@@ -26,14 +26,15 @@ public sealed class SqliteJobStore : IDurableJobStore
         "Lease expired with no attempts remaining; the worker likely crashed during execution.";
 
     // v1: initial schema. v2: drop the never-used job_locks table (SQLite's
-    // single-writer transaction is used instead).
-    private const int CurrentSchemaVersion = 2;
+    // single-writer transaction is used instead). v3: add runtime command receipts table.
+    private const int CurrentSchemaVersion = 3;
 
     private readonly string _connectionString;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
     private readonly string _migrationsTable;
+    private readonly string _runtimeCommandReceiptsTable;
 
     /// <summary>
     /// Initializes the store from the configured options. Requires a SQLite connection
@@ -53,6 +54,7 @@ public sealed class SqliteJobStore : IDurableJobStore
         _runsTable = Quote(SqliteTableNameResolver.Runs(options));
         _locksTable = Quote(SqliteTableNameResolver.Locks(options));
         _migrationsTable = Quote(SqliteTableNameResolver.Migrations(options));
+        _runtimeCommandReceiptsTable = Quote(SqliteTableNameResolver.RuntimeCommandReceipts(options));
     }
 
     /// <inheritdoc />
@@ -1182,6 +1184,16 @@ public sealed class SqliteJobStore : IDurableJobStore
             await RecordSchemaVersionAsync(connection, transaction, 2, cancellationToken);
         }
 
+        if (version < 3)
+        {
+            await using (var create = new SqliteCommand(BuildRuntimeCommandReceiptsMigrationSql(), connection, transaction))
+            {
+                await create.ExecuteNonQueryAsync(cancellationToken);
+            }
+
+            await RecordSchemaVersionAsync(connection, transaction, 3, cancellationToken);
+        }
+
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -1380,6 +1392,32 @@ public sealed class SqliteJobStore : IDurableJobStore
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_job_name")} on {_runsTable} (job_name);");
         sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_completed")} on {_runsTable} (status, completed_at_utc);");
         sb.AppendLine($"create unique index if not exists {QuoteIndex($"ix_{Unquote(_runsTable)}_recurring_slot_unique")} on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;");
+
+        return sb.ToString();
+    }
+
+    private string BuildRuntimeCommandReceiptsMigrationSql()
+    {
+        var sb = new StringBuilder();
+
+        sb.AppendLine($"create table if not exists {_runtimeCommandReceiptsTable} (");
+        sb.AppendLine("    command_id text primary key,");
+        sb.AppendLine("    status text not null,");
+        sb.AppendLine("    lease_owner text null,");
+        sb.AppendLine("    lease_until_utc text null,");
+        sb.AppendLine("    first_received_at_utc text not null,");
+        sb.AppendLine("    last_received_at_utc text not null,");
+        sb.AppendLine("    started_at_utc text null,");
+        sb.AppendLine("    completed_at_utc text null,");
+        sb.AppendLine("    run_id text null,");
+        sb.AppendLine("    error_code text null,");
+        sb.AppendLine("    error_message text null,");
+        sb.AppendLine("    created_at_utc text not null,");
+        sb.AppendLine("    updated_at_utc text not null");
+        sb.AppendLine(");");
+
+        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runtimeCommandReceiptsTable)}_lease")} on {_runtimeCommandReceiptsTable} (lease_until_utc);");
+        sb.AppendLine($"create index if not exists {QuoteIndex($"ix_{Unquote(_runtimeCommandReceiptsTable)}_status")} on {_runtimeCommandReceiptsTable} (status);");
 
         return sb.ToString();
     }
