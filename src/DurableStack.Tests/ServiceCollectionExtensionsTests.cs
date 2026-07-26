@@ -3,6 +3,7 @@ using System.Linq;
 using DurableStack.Hosting.DependencyInjection;
 using DurableStack.Hosting.Events;
 using DurableStack.Hosting.Hosting;
+using DurableStack.Hosting.RuntimeControl;
 using DurableStack.Core;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Events;
@@ -119,6 +120,26 @@ public sealed class ServiceCollectionExtensionsTests
 
         Assert.Contains(sinks, sink => sink is IngestionDurableStackEventSink);
         Assert.Contains(hostedServices, hosted => hosted is IngestionEventSyncHostedService);
+        Assert.Contains(hostedServices, hosted => hosted is RuntimeControlSyncHostedService);
+    }
+
+    [Fact]
+    public void AddDurableStack_with_runtime_control_disabled_does_not_register_runtime_control_service()
+    {
+        var services = new ServiceCollection();
+        services.AddLogging();
+
+        services.AddDurableStack(options =>
+        {
+            options.Eventing.TenantId = "tenant-alpha";
+            options.Eventing.ClientSecret = "secret-alpha";
+            options.Eventing.RuntimeControlEnabled = false;
+        });
+
+        using var provider = services.BuildServiceProvider();
+        var hostedServices = provider.GetServices<IHostedService>().ToList();
+
+        Assert.DoesNotContain(hostedServices, hosted => hosted is RuntimeControlSyncHostedService);
     }
 
     [Fact]
