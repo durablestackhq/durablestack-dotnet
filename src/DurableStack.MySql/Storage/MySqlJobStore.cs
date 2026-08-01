@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -1778,6 +1779,27 @@ public sealed class MySqlJobStore : IDurableJobStore
 
     private static string QuoteIndex(string identifier)
     {
-        return Quote(identifier);
+        return Quote(NormalizeIndexIdentifier(identifier));
+    }
+
+    private static string NormalizeIndexIdentifier(string identifier)
+    {
+        const int maxLength = 64;
+
+        if (identifier.Length <= maxLength)
+        {
+            return identifier;
+        }
+
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(identifier));
+        var hash = Convert.ToHexString(hashBytes[..6]).ToLowerInvariant();
+        var headLength = maxLength - hash.Length - 1;
+
+        if (headLength <= 0)
+        {
+            return hash[..Math.Min(maxLength, hash.Length)];
+        }
+
+        return $"{identifier[..headLength]}_{hash}";
     }
 }
