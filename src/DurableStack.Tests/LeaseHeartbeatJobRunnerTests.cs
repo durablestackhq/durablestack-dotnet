@@ -146,5 +146,17 @@ public sealed class LeaseHeartbeatJobRunnerTests
         public Task UpdateRecurringNextRunAsync(string jobName, DateTimeOffset nextRunAtUtc, CancellationToken cancellationToken) => throw new NotSupportedException();
 
         public Task<bool> TryMaterializeRecurringRunAsync(RecurringJobState recurring, DurableJobRegistration registration, DateTimeOffset nextRunAtUtc, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> TryLeaseRuntimeCommandReceiptAsync(string commandId, string workerName, TimeSpan leaseDuration, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> MarkRuntimeCommandAcknowledgedAsync(string commandId, string workerName, DateTimeOffset recordedAtUtc, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> MarkRuntimeCommandSucceededAsync(string commandId, string workerName, DateTimeOffset recordedAtUtc, DateTimeOffset completedAtUtc, Guid? runId, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> MarkRuntimeCommandFailedAsync(string commandId, string workerName, DateTimeOffset recordedAtUtc, DateTimeOffset completedAtUtc, string? errorCode, string? errorMessage, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(int take, CancellationToken cancellationToken) => throw new NotSupportedException();
+
+        public Task<bool> MarkRuntimeCommandReceiptUploadedAsync(string commandId, CancellationToken cancellationToken) => throw new NotSupportedException();
     }
 }

@@ -9,6 +9,7 @@ using DurableStack.Core.Options;
 using DurableStack.Core.Query;
 using DurableStack.Core.Scheduling;
 using DurableStack.Hosting.Events;
+using DurableStack.Hosting.RuntimeControl;
 using DurableStack.MySql.DependencyInjection;
 using DurableStack.Postgres.DependencyInjection;
 using DurableStack.Sqlite.DependencyInjection;
@@ -497,6 +498,21 @@ public static class ServiceCollectionExtensions
             options.Eventing.IngestionFlushInterval = TimeSpan.FromSeconds(5);
         }
 
+        if (options.Eventing.RuntimeControlSyncInterval <= TimeSpan.Zero)
+        {
+            options.Eventing.RuntimeControlSyncInterval = TimeSpan.FromSeconds(5);
+        }
+
+        if (options.Eventing.RuntimeControlCommandLeaseDuration <= TimeSpan.Zero)
+        {
+            options.Eventing.RuntimeControlCommandLeaseDuration = TimeSpan.FromSeconds(30);
+        }
+
+        if (options.Eventing.RuntimeControlMaxReceiptUpload <= 0)
+        {
+            options.Eventing.RuntimeControlMaxReceiptUpload = 200;
+        }
+
         if (!Enum.IsDefined(options.JobActivation))
         {
             options.JobActivation = DurableStackJobActivationMode.ScopedPerExecution;
@@ -590,6 +606,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IDurableStackProcessor, DurableStackProcessor>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableStackEventSink, NoOpDurableStackEventSink>());
         AddApiIngestionEventSinkIfConfigured(services, options);
+        AddRuntimeControlSyncIfConfigured(services, options);
 
         if (options.JobRegistration.AutoDiscoverJobsFromAssembly)
         {
@@ -961,6 +978,27 @@ public static class ServiceCollectionExtensions
         }
 
         services.UseDurableStackApiIngestionEventSink();
+    }
+
+    private static void AddRuntimeControlSyncIfConfigured(IServiceCollection services, DurableStackOptions options)
+    {
+        if (!options.Eventing.RuntimeControlEnabled)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(options.Eventing.TenantId)
+            || string.IsNullOrWhiteSpace(options.Eventing.ClientSecret))
+        {
+            return;
+        }
+
+        if (!services.Any(d => d.ServiceType == typeof(IHostedService) && d.ImplementationType == typeof(RuntimeControlSyncHostedService)))
+        {
+            services.AddHostedService<RuntimeControlSyncHostedService>();
+        }
+
+        services.AddHttpClient(nameof(RuntimeControlSyncHostedService));
     }
 
     private static IEnumerable<DurableJobRegistration> GetExistingRegistrations(IServiceCollection services)
