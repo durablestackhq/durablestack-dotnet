@@ -26,6 +26,25 @@ Provider packages: `DurableStack.Postgres`, `DurableStack.MySql`, `DurableStack.
 - `Eventing.IncludeErrorDetail` defaults to `false` (exception type is emitted, message/stack detail is redacted)
 - `Eventing.IngestionApiBaseUrl` must be absolute; non-loopback endpoints must use `https`
 
+## Runtime command control (`v1.2.x`)
+
+When hosted eventing credentials are configured, runtime command sync is enabled by default.
+
+Supported hosted commands:
+
+- run schedule now
+- pause schedule
+- resume schedule
+- update schedule cron and time zone
+
+Useful options:
+
+- `Eventing.RuntimeControlEnabled` (default `true`)
+- `Eventing.RuntimeControlSyncIntervalSeconds`
+- `Eventing.RuntimeControlSyncPath`
+- `Eventing.RuntimeControlMaxReceiptUpload`
+- `Eventing.RuntimeControlCommandLeaseDurationSeconds`
+
 ## Job registration defaults
 
 - `AddDurableStack(...)` auto-discovers public `IDurableJob` and `IDurableJob<TArgs>` classes from the app assembly
@@ -39,3 +58,4 @@ Provider packages: `DurableStack.Postgres`, `DurableStack.MySql`, `DurableStack.
 - Repository: https://github.com/durablestackhq/durablestack-dotnet
 - Docs: https://docs.durablestack.com/docs/latest/dotnet
 - Quickstart: https://docs.durablestack.com/docs/latest/dotnet/quickstart
+- Runtime command control: https://docs.durablestack.com/docs/latest/dotnet/usage-guide/runtime-command-control

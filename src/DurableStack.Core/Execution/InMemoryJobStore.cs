@@ -20,6 +20,8 @@ public sealed class InMemoryJobStore : IDurableJobStore
     private readonly object _gate = new();
     private readonly Dictionary<Guid, JobRunRecord> _runs = new();
     private readonly Dictionary<string, RecurringJobState> _recurring = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, RuntimeCommandReceiptRecord> _runtimeCommandReceipts = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (string? LeaseOwner, DateTimeOffset? LeaseUntilUtc, bool Uploaded)> _runtimeCommandReceiptState = new(StringComparer.Ordinal);
 
     /// <inheritdoc />
     public Task<Guid> EnqueueAsync(
@@ -578,6 +580,204 @@ public sealed class InMemoryJobStore : IDurableJobStore
             }
 
             return Task.FromResult(false);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<bool> TryLeaseRuntimeCommandReceiptAsync(
+        string commandId,
+        string workerName,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            if (!_runtimeCommandReceipts.TryGetValue(commandId, out var existing))
+            {
+                _runtimeCommandReceipts[commandId] = new RuntimeCommandReceiptRecord
+                {
+                    CommandId = commandId,
+                    Status = "leased",
+                    RecordedAtUtc = now,
+                    CompletedAtUtc = null,
+                };
+                _runtimeCommandReceiptState[commandId] = (workerName, now.Add(leaseDuration), false);
+                return Task.FromResult(true);
+            }
+
+            if (existing.Status is "succeeded" or "failed")
+            {
+                return Task.FromResult(false);
+            }
+
+            var state = _runtimeCommandReceiptState.GetValueOrDefault(commandId);
+            if (!string.IsNullOrWhiteSpace(state.LeaseOwner)
+                && state.LeaseUntilUtc.HasValue
+                && state.LeaseUntilUtc.Value > now
+                && !string.Equals(state.LeaseOwner, workerName, StringComparison.Ordinal))
+            {
+                return Task.FromResult(false);
+            }
+
+            _runtimeCommandReceipts[commandId] = new RuntimeCommandReceiptRecord
+            {
+                CommandId = existing.CommandId,
+                Status = "leased",
+                ErrorCode = existing.ErrorCode,
+                ErrorMessage = existing.ErrorMessage,
+                RunId = existing.RunId,
+                RecordedAtUtc = now,
+                CompletedAtUtc = existing.CompletedAtUtc,
+            };
+            _runtimeCommandReceiptState[commandId] = (workerName, now.Add(leaseDuration), false);
+            return Task.FromResult(true);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<bool> MarkRuntimeCommandAcknowledgedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_runtimeCommandReceipts.TryGetValue(commandId, out var existing))
+            {
+                return Task.FromResult(false);
+            }
+
+            var state = _runtimeCommandReceiptState.GetValueOrDefault(commandId);
+            if (!string.Equals(state.LeaseOwner, workerName, StringComparison.Ordinal))
+            {
+                return Task.FromResult(false);
+            }
+
+            _runtimeCommandReceipts[commandId] = new RuntimeCommandReceiptRecord
+            {
+                CommandId = existing.CommandId,
+                Status = "acknowledged",
+                ErrorCode = null,
+                ErrorMessage = null,
+                RunId = null,
+                RecordedAtUtc = recordedAtUtc,
+                CompletedAtUtc = null,
+            };
+            _runtimeCommandReceiptState[commandId] = (state.LeaseOwner, state.LeaseUntilUtc, false);
+            return Task.FromResult(true);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<bool> MarkRuntimeCommandSucceededAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        Guid? runId,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_runtimeCommandReceipts.TryGetValue(commandId, out var existing))
+            {
+                return Task.FromResult(false);
+            }
+
+            var state = _runtimeCommandReceiptState.GetValueOrDefault(commandId);
+            if (!string.Equals(state.LeaseOwner, workerName, StringComparison.Ordinal))
+            {
+                return Task.FromResult(false);
+            }
+
+            _runtimeCommandReceipts[commandId] = new RuntimeCommandReceiptRecord
+            {
+                CommandId = existing.CommandId,
+                Status = "succeeded",
+                ErrorCode = null,
+                ErrorMessage = null,
+                RunId = runId,
+                RecordedAtUtc = recordedAtUtc,
+                CompletedAtUtc = completedAtUtc,
+            };
+            _runtimeCommandReceiptState[commandId] = (null, null, false);
+            return Task.FromResult(true);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<bool> MarkRuntimeCommandFailedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_runtimeCommandReceipts.TryGetValue(commandId, out var existing))
+            {
+                return Task.FromResult(false);
+            }
+
+            var state = _runtimeCommandReceiptState.GetValueOrDefault(commandId);
+            if (!string.Equals(state.LeaseOwner, workerName, StringComparison.Ordinal))
+            {
+                return Task.FromResult(false);
+            }
+
+            _runtimeCommandReceipts[commandId] = new RuntimeCommandReceiptRecord
+            {
+                CommandId = existing.CommandId,
+                Status = "failed",
+                ErrorCode = errorCode,
+                ErrorMessage = errorMessage,
+                RunId = null,
+                RecordedAtUtc = recordedAtUtc,
+                CompletedAtUtc = completedAtUtc,
+            };
+            _runtimeCommandReceiptState[commandId] = (null, null, false);
+            return Task.FromResult(true);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            var result = _runtimeCommandReceipts.Values
+                .Where(x =>
+                {
+                    var state = _runtimeCommandReceiptState.GetValueOrDefault(x.CommandId);
+                    return !state.Uploaded && x.Status is "acknowledged" or "succeeded" or "failed";
+                })
+                .OrderBy(x => x.RecordedAtUtc)
+                .Take(Math.Max(1, take))
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<RuntimeCommandReceiptRecord>>(result);
+        }
+    }
+
+    /// <inheritdoc />
+    public Task<bool> MarkRuntimeCommandReceiptUploadedAsync(string commandId, CancellationToken cancellationToken)
+    {
+        lock (_gate)
+        {
+            if (!_runtimeCommandReceiptState.TryGetValue(commandId, out var state))
+            {
+                return Task.FromResult(false);
+            }
+
+            _runtimeCommandReceiptState[commandId] = (state.LeaseOwner, state.LeaseUntilUtc, true);
+            return Task.FromResult(true);
         }
     }
 

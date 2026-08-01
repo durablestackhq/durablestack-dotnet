@@ -11,6 +11,7 @@ internal static class PostgresTableNameResolver
     private const string RunsBase = "durable_stack_job_runs";
     private const string LocksBase = "durable_stack_job_locks";
     private const string MigrationsBase = "durable_stack_schema_migrations";
+    private const string RuntimeCommandReceiptsBase = "durable_stack_runtime_command_receipts";
 
     public static string Jobs(DurableStackOptions options)
     {
@@ -30,6 +31,11 @@ internal static class PostgresTableNameResolver
     public static string Migrations(DurableStackOptions options)
     {
         return Build(options.DatabaseTablePrefix, MigrationsBase);
+    }
+
+    public static string RuntimeCommandReceipts(DurableStackOptions options)
+    {
+        return Build(options.DatabaseTablePrefix, RuntimeCommandReceiptsBase);
     }
 
     private static string Build(string? prefix, string baseName)

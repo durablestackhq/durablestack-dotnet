@@ -274,4 +274,65 @@ public interface IDurableJobStore
         string workerName,
         TimeSpan leaseDuration,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Attempts to acquire local execution ownership for a platform command by creating or
+    /// atomically leasing its receipt row. Returns false when another worker currently owns
+    /// the lease for the same command id.
+    /// </summary>
+    Task<bool> TryLeaseRuntimeCommandReceiptAsync(
+        string commandId,
+        string workerName,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records that a leased platform command has been acknowledged for execution by this
+    /// worker. The write is fenced to the current lease owner.
+    /// </summary>
+    Task<bool> MarkRuntimeCommandAcknowledgedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records successful completion of a leased platform command, clearing its lease.
+    /// The write is fenced to the current lease owner.
+    /// </summary>
+    Task<bool> MarkRuntimeCommandSucceededAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        Guid? runId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Records failed completion of a leased platform command, clearing its lease.
+    /// The write is fenced to the current lease owner.
+    /// </summary>
+    Task<bool> MarkRuntimeCommandFailedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Returns locally recorded command receipts that are pending upload to the platform.
+    /// </summary>
+    Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(
+        int take,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Marks a locally recorded command receipt as uploaded to the platform so it is not
+    /// returned again by <see cref="GetRuntimeCommandReceiptsAsync(int, CancellationToken)"/>.
+    /// </summary>
+    Task<bool> MarkRuntimeCommandReceiptUploadedAsync(
+        string commandId,
+        CancellationToken cancellationToken);
 }

@@ -10,6 +10,7 @@ namespace DurableStack.Core.Options;
 public sealed class DurableStackEventingOptions
 {
     private static readonly TimeSpan DefaultIngestionFlushInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultRuntimeControlSyncInterval = TimeSpan.FromSeconds(5);
     private const int DefaultMaxErrorDetailLength = 4096;
 
     /// <summary>
@@ -97,5 +98,52 @@ public sealed class DurableStackEventingOptions
     public int GetEffectiveMaxErrorDetailLength()
     {
         return MaxErrorDetailLength > 0 ? MaxErrorDetailLength : DefaultMaxErrorDetailLength;
+    }
+
+    /// <summary>
+    /// Enables runtime control sync polling (snapshot upload + command receipt + command
+    /// fetch) against the hosted platform when tenant credentials are configured.
+    /// </summary>
+    public bool RuntimeControlEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Request path, relative to <see cref="IngestionApiBaseUrl"/>, used for runtime
+    /// control sync polling.
+    /// </summary>
+    public string RuntimeControlSyncPath { get; set; } = "/v1/runtime/control/sync";
+
+    /// <summary>
+    /// Poll interval for runtime control sync.
+    /// </summary>
+    public TimeSpan RuntimeControlSyncInterval { get; set; } = DefaultRuntimeControlSyncInterval;
+
+    /// <summary>
+    /// Configuration-binding alias for <see cref="RuntimeControlSyncInterval"/>, in
+    /// seconds.
+    /// </summary>
+    public double RuntimeControlSyncIntervalSeconds
+    {
+        get => RuntimeControlSyncInterval.TotalSeconds;
+        set => RuntimeControlSyncInterval = value > 0 ? TimeSpan.FromSeconds(value) : DefaultRuntimeControlSyncInterval;
+    }
+
+    /// <summary>
+    /// Maximum local receipts uploaded in one control sync request.
+    /// </summary>
+    public int RuntimeControlMaxReceiptUpload { get; set; } = 200;
+
+    /// <summary>
+    /// Local lease duration used to coordinate command execution across multiple workers.
+    /// </summary>
+    public TimeSpan RuntimeControlCommandLeaseDuration { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Configuration-binding alias for <see cref="RuntimeControlCommandLeaseDuration"/>, in
+    /// seconds.
+    /// </summary>
+    public double RuntimeControlCommandLeaseDurationSeconds
+    {
+        get => RuntimeControlCommandLeaseDuration.TotalSeconds;
+        set => RuntimeControlCommandLeaseDuration = value > 0 ? TimeSpan.FromSeconds(value) : TimeSpan.FromSeconds(30);
     }
 }

@@ -28,14 +28,17 @@ public sealed class SqlServerJobStore : IDurableJobStore
     private readonly string _jobsTableName;
     private readonly string _runsTableName;
     private readonly string _locksTableName;
+    private readonly string _runtimeCommandReceiptsTableName;
     private readonly string _jobsTable;
     private readonly string _runsTable;
     private readonly string _locksTable;
     private readonly string _migrationsTable;
+    private readonly string _runtimeCommandReceiptsTable;
 
     // v1: initial schema. v2: drop the never-used job_locks table (sp_getapplock is
-    // used instead).
-    private const int CurrentSchemaVersion = 2;
+    // used instead). v3: add runtime command receipts table. v4: add uploaded marker
+    // and recorded timestamp for receipt upload dedupe.
+    private const int CurrentSchemaVersion = 4;
 
     /// <summary>
     /// Initializes the store from the configured options. Requires a SQL Server connection
@@ -56,10 +59,12 @@ public sealed class SqlServerJobStore : IDurableJobStore
         _jobsTableName = SqlServerTableNameResolver.Jobs(options);
         _runsTableName = SqlServerTableNameResolver.Runs(options);
         _locksTableName = SqlServerTableNameResolver.Locks(options);
+        _runtimeCommandReceiptsTableName = SqlServerTableNameResolver.RuntimeCommandReceipts(options);
         _jobsTable = Qualify(_jobsTableName);
         _runsTable = Qualify(_runsTableName);
         _locksTable = Qualify(_locksTableName);
         _migrationsTable = Qualify(SqlServerTableNameResolver.Migrations(options));
+        _runtimeCommandReceiptsTable = Qualify(_runtimeCommandReceiptsTableName);
     }
 
     /// <inheritdoc />
@@ -1053,6 +1058,285 @@ public sealed class SqlServerJobStore : IDurableJobStore
         return affected > 0;
     }
 
+    /// <inheritdoc />
+    public async Task<bool> TryLeaseRuntimeCommandReceiptAsync(
+        string commandId,
+        string workerName,
+        TimeSpan leaseDuration,
+        CancellationToken cancellationToken)
+    {
+        var leaseSeconds = Math.Max(1, (int)Math.Ceiling(leaseDuration.TotalSeconds));
+
+        var sql = $"""
+            declare @affected int = 0;
+
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = N'leased',
+                lease_owner = @worker_name,
+                lease_until_utc = dateadd(second, @lease_seconds, sysutcdatetime()),
+                last_received_at_utc = sysutcdatetime(),
+                recorded_at_utc = sysutcdatetime(),
+                started_at_utc = null,
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = sysutcdatetime()
+            where command_id = @command_id
+              and status not in (N'succeeded', N'failed')
+              and (
+                lease_owner is null
+                or lease_until_utc is null
+                or lease_until_utc <= sysutcdatetime()
+                or lease_owner = @worker_name);
+
+            set @affected = @@rowcount;
+
+            if @affected = 0
+               and not exists (select 1 from {_runtimeCommandReceiptsTable} with (updlock, holdlock) where command_id = @command_id)
+            begin
+                insert into {_runtimeCommandReceiptsTable} (
+                    command_id,
+                    status,
+                    lease_owner,
+                    lease_until_utc,
+                    first_received_at_utc,
+                    last_received_at_utc,
+                    recorded_at_utc,
+                    created_at_utc,
+                    updated_at_utc,
+                    uploaded_to_platform)
+                values (
+                    @command_id,
+                    N'leased',
+                    @worker_name,
+                    dateadd(second, @lease_seconds, sysutcdatetime()),
+                    sysutcdatetime(),
+                    sysutcdatetime(),
+                    sysutcdatetime(),
+                    sysutcdatetime(),
+                    sysutcdatetime(),
+                    0);
+
+                set @affected = @@rowcount;
+            end
+
+            select @affected;
+            """;
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddRange(
+        [
+            new SqlParameter("@command_id", commandId),
+            new SqlParameter("@worker_name", workerName),
+            new SqlParameter("@lease_seconds", leaseSeconds),
+        ]);
+
+        try
+        {
+            var result = await command.ExecuteScalarAsync(cancellationToken);
+            var affected = Convert.ToInt32(result ?? 0, System.Globalization.CultureInfo.InvariantCulture);
+            return affected > 0;
+        }
+        catch (SqlException ex) when (ex.Number is 2601 or 2627)
+        {
+            return false;
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandAcknowledgedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = N'acknowledged',
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = isnull(started_at_utc, @recorded_at_utc),
+                completed_at_utc = null,
+                run_id = null,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = sysutcdatetime()
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in (N'leased', N'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqlParameter("@command_id", commandId),
+            new SqlParameter("@worker_name", workerName),
+            UtcDateTime2Parameter("@recorded_at_utc", recordedAtUtc.UtcDateTime));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandSucceededAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        Guid? runId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = N'succeeded',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = isnull(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = @run_id,
+                error_code = null,
+                error_message = null,
+                uploaded_to_platform = 0,
+                updated_at_utc = sysutcdatetime()
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in (N'leased', N'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqlParameter("@command_id", commandId),
+            new SqlParameter("@worker_name", workerName),
+            UtcDateTime2Parameter("@recorded_at_utc", recordedAtUtc.UtcDateTime),
+            UtcDateTime2Parameter("@completed_at_utc", completedAtUtc.UtcDateTime),
+            new SqlParameter("@run_id", (object?)runId ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandFailedAsync(
+        string commandId,
+        string workerName,
+        DateTimeOffset recordedAtUtc,
+        DateTimeOffset completedAtUtc,
+        string? errorCode,
+        string? errorMessage,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                status = N'failed',
+                lease_owner = null,
+                lease_until_utc = null,
+                last_received_at_utc = @recorded_at_utc,
+                recorded_at_utc = @recorded_at_utc,
+                started_at_utc = isnull(started_at_utc, @recorded_at_utc),
+                completed_at_utc = @completed_at_utc,
+                run_id = null,
+                error_code = @error_code,
+                error_message = @error_message,
+                uploaded_to_platform = 0,
+                updated_at_utc = sysutcdatetime()
+            where command_id = @command_id
+              and lease_owner = @worker_name
+              and status in (N'leased', N'acknowledged');
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqlParameter("@command_id", commandId),
+            new SqlParameter("@worker_name", workerName),
+            UtcDateTime2Parameter("@recorded_at_utc", recordedAtUtc.UtcDateTime),
+            UtcDateTime2Parameter("@completed_at_utc", completedAtUtc.UtcDateTime),
+            new SqlParameter("@error_code", (object?)errorCode ?? DBNull.Value),
+            new SqlParameter("@error_message", (object?)errorMessage ?? DBNull.Value));
+        return affected > 0;
+    }
+
+    /// <inheritdoc />
+    public async Task<IReadOnlyList<RuntimeCommandReceiptRecord>> GetRuntimeCommandReceiptsAsync(
+        int take,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            select top (@take)
+                command_id,
+                status,
+                error_code,
+                error_message,
+                run_id,
+                recorded_at_utc,
+                completed_at_utc
+            from {_runtimeCommandReceiptsTable}
+            where uploaded_to_platform = 0
+              and status in (N'acknowledged', N'succeeded', N'failed')
+            order by recorded_at_utc asc;
+            """;
+
+        var results = new List<RuntimeCommandReceiptRecord>();
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@take", Math.Max(1, take));
+
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            var runIdOrdinal = reader.GetOrdinal("run_id");
+            var completedAtOrdinal = reader.GetOrdinal("completed_at_utc");
+
+            results.Add(new RuntimeCommandReceiptRecord
+            {
+                CommandId = reader.GetString(reader.GetOrdinal("command_id")),
+                Status = reader.GetString(reader.GetOrdinal("status")),
+                ErrorCode = reader.IsDBNull(reader.GetOrdinal("error_code")) ? null : reader.GetString(reader.GetOrdinal("error_code")),
+                ErrorMessage = reader.IsDBNull(reader.GetOrdinal("error_message")) ? null : reader.GetString(reader.GetOrdinal("error_message")),
+                RunId = reader.IsDBNull(runIdOrdinal) ? null : reader.GetGuid(runIdOrdinal),
+                RecordedAtUtc = AsUtcDateTimeOffset(reader, "recorded_at_utc"),
+                CompletedAtUtc = reader.IsDBNull(completedAtOrdinal)
+                    ? null
+                    : AsUtcDateTimeOffset(reader, "completed_at_utc"),
+            });
+        }
+
+        return results;
+    }
+
+    /// <inheritdoc />
+    public async Task<bool> MarkRuntimeCommandReceiptUploadedAsync(
+        string commandId,
+        CancellationToken cancellationToken)
+    {
+        var sql = $"""
+            update {_runtimeCommandReceiptsTable}
+            set
+                uploaded_to_platform = 1,
+                updated_at_utc = sysutcdatetime()
+            where command_id = @command_id
+              and uploaded_to_platform = 0;
+            """;
+
+        var affected = await ExecuteNonQueryAsync(
+            sql,
+            cancellationToken,
+            new SqlParameter("@command_id", commandId));
+        return affected > 0;
+    }
+
     /// <summary>
     /// Creates or upgrades the schema to the current version, recording each applied
     /// version in the schema migrations table. Concurrent workers are serialized with
@@ -1096,6 +1380,16 @@ public sealed class SqlServerJobStore : IDurableJobStore
         if (version < 2)
         {
             await ExecuteMigrationStepAsync(connection, transaction, $"drop table if exists {_locksTable};", 2, cancellationToken);
+        }
+
+        if (version < 3)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildRuntimeCommandReceiptsMigrationSql(), 3, cancellationToken);
+        }
+
+        if (version < 4)
+        {
+            await ExecuteMigrationStepAsync(connection, transaction, BuildRuntimeCommandReceiptUploadMarkerMigrationSql(), 4, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -1410,6 +1704,69 @@ public sealed class SqlServerJobStore : IDurableJobStore
             if not exists (select 1 from sys.indexes where name = N'{runsRecurringUniqueIndexName}' and object_id = object_id(N'{runsObject}'))
             begin
                 create unique index [{runsRecurringUniqueIndexName}] on {_runsTable} (job_name, schedule_slot_utc) where schedule_slot_utc is not null;
+            end;
+            """;
+    }
+
+    private string BuildRuntimeCommandReceiptsMigrationSql()
+    {
+        var receiptsObject = TableObjectName(_runtimeCommandReceiptsTableName);
+        var leaseIndexName = $"ix_{_runtimeCommandReceiptsTableName}_lease";
+        var statusIndexName = $"ix_{_runtimeCommandReceiptsTableName}_status";
+
+        return $"""
+            if object_id(N'{receiptsObject}', N'U') is null
+            begin
+                create table {_runtimeCommandReceiptsTable} (
+                    command_id nvarchar(200) not null primary key,
+                    status nvarchar(32) not null,
+                    lease_owner nvarchar(256) null,
+                    lease_until_utc datetime2(7) null,
+                    first_received_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_first_received_at_utc default SYSUTCDATETIME(),
+                    last_received_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_last_received_at_utc default SYSUTCDATETIME(),
+                    recorded_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_recorded_at_utc default SYSUTCDATETIME(),
+                    started_at_utc datetime2(7) null,
+                    completed_at_utc datetime2(7) null,
+                    run_id uniqueidentifier null,
+                    error_code nvarchar(128) null,
+                    error_message nvarchar(2000) null,
+                    uploaded_to_platform bit not null constraint DF_{_runtimeCommandReceiptsTableName}_uploaded default 0,
+                    created_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_created_at_utc default SYSUTCDATETIME(),
+                    updated_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_updated_at_utc default SYSUTCDATETIME()
+                );
+            end;
+
+            if not exists (select 1 from sys.indexes where name = N'{leaseIndexName}' and object_id = object_id(N'{receiptsObject}'))
+            begin
+                create index [{leaseIndexName}] on {_runtimeCommandReceiptsTable} (lease_until_utc);
+            end;
+
+            if not exists (select 1 from sys.indexes where name = N'{statusIndexName}' and object_id = object_id(N'{receiptsObject}'))
+            begin
+                create index [{statusIndexName}] on {_runtimeCommandReceiptsTable} (status);
+            end;
+            """;
+    }
+
+    private string BuildRuntimeCommandReceiptUploadMarkerMigrationSql()
+    {
+        var receiptsObject = TableObjectName(_runtimeCommandReceiptsTableName);
+        var uploadedIndexName = $"ix_{_runtimeCommandReceiptsTableName}_uploaded";
+
+        return $"""
+            if col_length(N'{receiptsObject}', N'recorded_at_utc') is null
+            begin
+                alter table {_runtimeCommandReceiptsTable} add recorded_at_utc datetime2(7) not null constraint DF_{_runtimeCommandReceiptsTableName}_recorded_at_utc_v4 default SYSUTCDATETIME();
+            end;
+
+            if col_length(N'{receiptsObject}', N'uploaded_to_platform') is null
+            begin
+                alter table {_runtimeCommandReceiptsTable} add uploaded_to_platform bit not null constraint DF_{_runtimeCommandReceiptsTableName}_uploaded_v4 default 0;
+            end;
+
+            if not exists (select 1 from sys.indexes where name = N'{uploadedIndexName}' and object_id = object_id(N'{receiptsObject}'))
+            begin
+                create index [{uploadedIndexName}] on {_runtimeCommandReceiptsTable} (uploaded_to_platform, status, recorded_at_utc);
             end;
             """;
     }

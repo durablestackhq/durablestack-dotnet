@@ -42,6 +42,17 @@ See the [full Quickstart](https://docs.durablestack.com/docs/latest/dotnet/quick
 - Multi-provider support (PostgreSQL, MySQL, SQL Server, SQLite, InMemory).
 - OpenTelemetry + custom event sinks.
 - Hosted observability platform (free tier available).
+- Hosted runtime command control for recurring schedules (run now, pause/resume, cron updates).
+
+## Runtime Command Control (`v1.2.x`)
+
+When hosted eventing credentials are configured, worker runtimes also sync runtime-control commands from the platform.
+
+- Run schedule now
+- Pause/resume schedule
+- Update cron and time zone
+
+See docs: [Runtime Command Control](https://docs.durablestack.com/docs/latest/dotnet/usage-guide/runtime-command-control)
 
 ## Comparison
 
