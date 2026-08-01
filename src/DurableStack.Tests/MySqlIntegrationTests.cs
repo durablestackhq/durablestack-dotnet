@@ -125,7 +125,7 @@ public sealed class MySqlIntegrationTests
         await connection.OpenAsync();
         await using var command = new MySqlCommand($"select count(*) from {prefix}durable_stack_schema_migrations", connection);
         var versions = Convert.ToInt32(await command.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture);
-        Assert.Equal(3, versions);
+        Assert.Equal(4, versions);
     }
 
     [SkippableFact]
