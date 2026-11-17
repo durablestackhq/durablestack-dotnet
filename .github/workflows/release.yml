@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   publish:
@@ -109,10 +110,20 @@ jobs:
           done
           ls -l artifacts/nuget
 
+      # Prefer a short-lived key from NuGet trusted publishing; fall back to NUGET_API_KEY if login does not succeed.
+      - name: NuGet login (OIDC)
+        id: nuget-login
+        uses: NuGet/login@v1
+        continue-on-error: true
+        with:
+          user: DurableStack
+
       - name: Push to NuGet
+        env:
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY || secrets.NUGET_API_KEY }}
         run: >-
           dotnet nuget push "artifacts/nuget/*.nupkg"
-          --api-key "${{ secrets.NUGET_API_KEY }}"
+          --api-key "$NUGET_API_KEY"
           --source https://api.nuget.org/v3/index.json
           --skip-duplicate
 
