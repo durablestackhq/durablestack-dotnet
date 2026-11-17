@@ -12,7 +12,7 @@ DurableStack provides recurring scheduling, retries, distributed execution, and 
 - **Database-native execution** — Use your existing SQL Server, PostgreSQL, MySQL, or SQLite as the coordination layer.
 - **Distributed-safe by default** — Lease-based claiming, heartbeats, and safe reclaim on failure.
 - **Production observability** — OpenTelemetry integration + optional hosted dashboards at [app.durablestack.com](https://app.durablestack.com).
-- **Multi-runtime roadmap** — .NET today, Node.js & Python coming soon with consistent contracts.
+- **Multi-runtime** — .NET, [Node.js](https://www.npmjs.com/package/durablestack), and [Python](https://pypi.org/project/durablestack/) are available, with consistent contracts. See the [docs](https://docs.durablestack.com/docs/v1).
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ See docs: [Runtime Command Control](https://docs.durablestack.com/docs/latest/do
 | Distributed execution    | Yes (lease-based)  | Yes          | Yes          |
 | OpenTelemetry            | First-class        | Partial      | Varies       |
 | Hosted observability     | Yes (optional)     | No           | No           |
-| Multi-runtime roadmap    | Yes                | No           | No           |
+| Multi-runtime support    | Yes                | No           | No           |
 
 Full comparison → [durablestack.com/alternatives](https://durablestack.com/alternatives)
 
