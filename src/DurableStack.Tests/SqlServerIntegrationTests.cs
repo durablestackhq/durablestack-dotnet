@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Transactions;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
 using DurableStack.SqlServer.Storage;
@@ -210,6 +211,47 @@ public sealed class SqlServerIntegrationTests
         var run = Assert.Single(runs);
         Assert.Equal("leased", run.Status);
         Assert.Equal(1, run.Attempt);
+    }
+
+    [SkippableFact]
+    public async Task ClaimDueRunsAsync_succeeds_inside_serializable_transaction_scope()
+    {
+        var connectionString = GetConnectionStringOrSkip();
+
+        var options = CreateOptions(connectionString, prefix: "it_tx_claim_1_");
+        var store = new SqlServerJobStore(options);
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+        await ClearRunsAsync(connectionString, "it_tx_claim_1_durable_stack_job_runs");
+
+        await store.EnqueueAsync("job-tx-claim", "job-type-tx-claim", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
+
+        using var scope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled);
+        var claimed = await store.ClaimDueRunsAsync("worker-tx-claim", 1, TimeSpan.FromSeconds(30), CancellationToken.None);
+        scope.Complete();
+
+        Assert.Single(claimed);
+    }
+
+    [SkippableFact]
+    public async Task PruneHistoricalRunsAsync_succeeds_inside_serializable_transaction_scope()
+    {
+        var connectionString = GetConnectionStringOrSkip();
+
+        var options = CreateOptions(connectionString, prefix: "it_tx_prune_1_");
+        var store = new SqlServerJobStore(options);
+        await store.EnsureMigrationsAppliedAsync(CancellationToken.None);
+        await ClearRunsAsync(connectionString, "it_tx_prune_1_durable_stack_job_runs");
+
+        var runId = await store.EnqueueAsync("job-tx-prune", "job-type-tx-prune", null, DateTimeOffset.UtcNow.AddSeconds(-1), 3, CancellationToken.None);
+        var claimed = await store.ClaimDueRunsAsync("worker-tx-prune", 1, TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.Single(claimed);
+        Assert.True(await store.MarkSucceededAsync(runId, "worker-tx-prune", CancellationToken.None));
+
+        using var scope = new TransactionScope(TransactionScopeOption.Required, TransactionScopeAsyncFlowOption.Enabled);
+        var deleted = await store.PruneHistoricalRunsAsync(DateTimeOffset.UtcNow.AddMinutes(1), 50, CancellationToken.None);
+        scope.Complete();
+
+        Assert.True(deleted >= 1);
     }
 
     [SkippableFact]

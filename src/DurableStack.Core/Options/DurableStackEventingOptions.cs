@@ -12,6 +12,7 @@ public sealed class DurableStackEventingOptions
     private static readonly TimeSpan DefaultIngestionFlushInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan DefaultRuntimeControlSyncInterval = TimeSpan.FromSeconds(5);
     private const int DefaultMaxErrorDetailLength = 4096;
+    private const double DefaultSyncJitterRatio = 0.2;
 
     /// <summary>
     /// Tenant identifier stamped on every published event and used to authenticate against
@@ -78,6 +79,18 @@ public sealed class DurableStackEventingOptions
     }
 
     /// <summary>
+    /// Adds random per-cycle jitter to ingestion sync interval to reduce thundering-herd
+    /// behavior across many workers.
+    /// </summary>
+    public bool IngestionSyncJitterEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Jitter ratio applied to ingestion sync interval when
+    /// <see cref="IngestionSyncJitterEnabled"/> is true. For example, 0.2 applies +/-20%.
+    /// </summary>
+    public double IngestionSyncJitterRatio { get; set; } = DefaultSyncJitterRatio;
+
+    /// <summary>
     /// Whether exception messages and stack traces are included in published failure events.
     /// False by default: only the exception type name leaves the process, because messages
     /// and traces routinely contain sensitive values (connection details, file paths, SQL
@@ -126,6 +139,18 @@ public sealed class DurableStackEventingOptions
         get => RuntimeControlSyncInterval.TotalSeconds;
         set => RuntimeControlSyncInterval = value > 0 ? TimeSpan.FromSeconds(value) : DefaultRuntimeControlSyncInterval;
     }
+
+    /// <summary>
+    /// Adds random per-cycle jitter to runtime-control sync interval to reduce
+    /// synchronized writes from many workers.
+    /// </summary>
+    public bool RuntimeControlSyncJitterEnabled { get; set; } = true;
+
+    /// <summary>
+    /// Jitter ratio applied to runtime-control sync interval when
+    /// <see cref="RuntimeControlSyncJitterEnabled"/> is true. For example, 0.2 applies +/-20%.
+    /// </summary>
+    public double RuntimeControlSyncJitterRatio { get; set; } = DefaultSyncJitterRatio;
 
     /// <summary>
     /// Maximum local receipts uploaded in one control sync request.

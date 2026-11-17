@@ -84,7 +84,7 @@ public sealed class RuntimeControlSyncHostedService : BackgroundService
             try
             {
                 await SyncOnceAsync(stoppingToken);
-                await Task.Delay(_options.Eventing.RuntimeControlSyncInterval, stoppingToken);
+                await Task.Delay(ComputeSyncLoopDelay(_options.Eventing.RuntimeControlSyncInterval), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -453,6 +453,24 @@ public sealed class RuntimeControlSyncHostedService : BackgroundService
         var baseDelayMs = Math.Min(30_000, 500 * (int)Math.Pow(2, Math.Max(0, attempt - 1)));
         var jitter = _random.Next(0, 250);
         return TimeSpan.FromMilliseconds(baseDelayMs + jitter);
+    }
+
+    private TimeSpan ComputeSyncLoopDelay(TimeSpan interval)
+    {
+        if (!_options.Eventing.RuntimeControlSyncJitterEnabled)
+        {
+            return interval;
+        }
+
+        var ratio = Math.Clamp(_options.Eventing.RuntimeControlSyncJitterRatio, 0, 1);
+        if (ratio <= 0)
+        {
+            return interval;
+        }
+
+        var factor = 1 + ((_random.NextDouble() * 2 - 1) * ratio);
+        var jitteredMs = Math.Max(100, interval.TotalMilliseconds * factor);
+        return TimeSpan.FromMilliseconds(jitteredMs);
     }
 
     private static string Truncate(string message, int maxLength)

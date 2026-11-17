@@ -141,7 +141,7 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
                     pending.Clear();
                 }
 
-                await Task.Delay(flushInterval, stoppingToken);
+                await Task.Delay(ComputeSyncLoopDelay(flushInterval), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -382,5 +382,23 @@ public sealed class IngestionEventSyncHostedService : BackgroundService
         var baseDelayMs = Math.Min(30_000, 500 * (int)Math.Pow(2, Math.Max(0, attempt - 1)));
         var jitter = _random.Next(0, 250);
         return TimeSpan.FromMilliseconds(baseDelayMs + jitter);
+    }
+
+    private TimeSpan ComputeSyncLoopDelay(TimeSpan interval)
+    {
+        if (!_options.Eventing.IngestionSyncJitterEnabled)
+        {
+            return interval;
+        }
+
+        var ratio = Math.Clamp(_options.Eventing.IngestionSyncJitterRatio, 0, 1);
+        if (ratio <= 0)
+        {
+            return interval;
+        }
+
+        var factor = 1 + ((_random.NextDouble() * 2 - 1) * ratio);
+        var jitteredMs = Math.Max(100, interval.TotalMilliseconds * factor);
+        return TimeSpan.FromMilliseconds(jitteredMs);
     }
 }
