@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Transactions;
 using DurableStack.Core.Abstractions;
 using DurableStack.Core.Models;
 using DurableStack.Core.Options;
@@ -186,6 +187,8 @@ public sealed class SqlServerJobStore : IDurableJobStore
         TimeSpan leaseDuration,
         CancellationToken cancellationToken)
     {
+        using var suppressed = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled);
+
         var leaseSeconds = Math.Max(1, (int)Math.Ceiling(leaseDuration.TotalSeconds));
 
         // Quarantine poison runs: a run whose lease expired with no attempts left
@@ -271,6 +274,8 @@ public sealed class SqlServerJobStore : IDurableJobStore
         {
             runs.Add(MapRun(reader));
         }
+
+        suppressed.Complete();
 
         return runs;
     }
@@ -758,6 +763,8 @@ public sealed class SqlServerJobStore : IDurableJobStore
         int batchSize,
         CancellationToken cancellationToken)
     {
+        using var suppressed = new TransactionScope(TransactionScopeOption.Suppress, TransactionScopeAsyncFlowOption.Enabled);
+
         var sql = $"""
             ;with to_delete as (
                 select top (@batch_size) id
@@ -779,7 +786,10 @@ public sealed class SqlServerJobStore : IDurableJobStore
         command.Parameters.AddWithValue("@batch_size", Math.Max(1, batchSize));
         command.Parameters.Add(UtcDateTime2Parameter("@completed_before_utc", completedBeforeUtc.UtcDateTime));
 
-        return await command.ExecuteNonQueryAsync(cancellationToken);
+        var deleted = await command.ExecuteNonQueryAsync(cancellationToken);
+        suppressed.Complete();
+
+        return deleted;
     }
 
     /// <inheritdoc />
